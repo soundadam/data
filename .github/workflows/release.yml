@@ -1,0 +1,49 @@
+name: Release
+
+# A tag vX.Y.Z publishes ghcr.io/soundadam/data:X.Y.Z. platform-gitops pins
+# the digest this prints (clusters/production/apps/data/deployment.yaml and
+# tests/data/product-images.yaml there); a tag reaches production only
+# through a change there.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/soundadam/data
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Build
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          docker build --pull \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "${IMAGE}:${version}" .
+          docker run --rm --read-only --tmpfs /tmp "${IMAGE}:${version}" \
+            python -c 'import duckdb, pyarrow, boto3, dataservice.app; print(duckdb.__version__)'
+
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          docker push "${IMAGE}:${version}"
+          echo "published $(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${version}")" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

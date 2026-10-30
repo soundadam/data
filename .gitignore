@@ -1,0 +1,10 @@
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.sqlite3
+# Releases are CC BY-NC-SA data: never copied into this repository.
+*.parquet
+*.wav
+*.mp4
+*.npz

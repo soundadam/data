@@ -1,0 +1,126 @@
+/* The RoboHEARD viewer: energy curve, speaker lanes, waveform, video. */
+.rh-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: var(--space-10);
+	margin: var(--space-10) 0;
+}
+
+.rh-toolbar label {
+	display: grid;
+	gap: 0.25rem;
+	font-size: var(--text-2xs);
+	color: var(--color-muted);
+}
+
+.rh-plot {
+	display: grid;
+	grid-template-columns: 6.5rem minmax(0, 1fr);
+	column-gap: var(--space-10);
+	margin: var(--space-10) 0;
+}
+
+.rh-plot .names {
+	display: grid;
+	font-size: var(--text-2xs);
+	color: var(--color-muted);
+}
+
+.rh-plot .names span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	line-height: 18px;
+}
+
+.rh-plot svg {
+	display: block;
+	width: 100%;
+	overflow: visible;
+}
+
+.rh-plot .axis {
+	grid-column: 2;
+}
+
+.rh-energy path {
+	fill: none;
+	stroke: var(--series);
+	stroke-width: 1.2;
+	vector-effect: non-scaling-stroke;
+}
+
+.rh-lanes rect.seg {
+	fill: var(--series);
+	cursor: pointer;
+}
+
+.rh-lanes rect.seg:hover,
+.rh-lanes rect.seg.current {
+	opacity: 0.7;
+}
+
+.rh-lanes line {
+	stroke: var(--color-border);
+	vector-effect: non-scaling-stroke;
+}
+
+rect.rh-mark {
+	fill: var(--color-accent-soft);
+	opacity: 0.6;
+}
+
+.rh-wave {
+	position: relative;
+	height: 96px;
+	border: 1px solid var(--color-border);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.rh-wave canvas {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.rh-wave .playhead {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--color-contrast);
+	pointer-events: none;
+}
+
+.rh-media {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: var(--space-10);
+}
+
+@media (min-width: 60rem) {
+	.rh-media.with-video {
+		grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+	}
+}
+
+.rh-media audio,
+.rh-media video {
+	width: 100%;
+}
+
+.rh-text {
+	font-size: var(--text-md);
+	margin: var(--space-10) 0;
+}
+
+.rh-near {
+	font-size: var(--text-xs);
+	color: var(--color-muted);
+}
+
+td.rh-long {
+	min-width: 18rem;
+}

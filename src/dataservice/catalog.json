@@ -1,0 +1,12 @@
+{
+  "competitions": [
+    {
+      "id": "roboheard-2027",
+      "title": "RoboHEARD 2027 训练集",
+      "kind": "roboheard",
+      "bucket": "roboheard",
+      "prefix": "train-v1/",
+      "license": "CC BY-NC-SA 4.0"
+    }
+  ]
+}

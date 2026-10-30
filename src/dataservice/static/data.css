@@ -1,0 +1,14 @@
+/* What console.css (/_design/) has no class for. */
+.field.wide {
+	grid-column: 1 / -1;
+}
+
+.field.wide input {
+	width: 100%;
+	font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+main.console pre {
+	overflow-x: auto;
+	font-size: var(--text-xs);
+}
