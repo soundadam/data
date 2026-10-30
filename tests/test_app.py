@@ -105,7 +105,7 @@ def test_row_fragment(ports):
     status, _, body = web(ports, "/row")
     assert status == 200 and body.decode().startswith('<tr><th scope="row"><a href="/data/">数据集</a>')
     assert "1 个比赛" in body.decode()
-    assert "未批准" in web(ports, "/row", {**MEMBER, "github_user_id": "8"})[2].decode()
+    assert 'pill muted">无<' in web(ports, "/row", {**MEMBER, "github_user_id": "8"})[2].decode()
 
 
 def test_members_down_is_503(ports):
