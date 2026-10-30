@@ -224,7 +224,7 @@ class Web(Base):
                 claims,
                 "数据集",
                 "没有开通数据集",
-                '<section><p class="hint lead">在<a href="/">概要</a>申请一个比赛，所有者批准后就能看。</p></section>',
+                '<section><p class="hint lead">这个账号还没有任何比赛的数据。</p></section>',
             )
             return None
         return claims, github
@@ -293,7 +293,7 @@ class Web(Base):
         status = (
             f'<span class="pill ok">{len(held)} 个比赛</span>'
             if held
-            else '<span class="pill muted">未批准</span>'
+            else '<span class="pill muted">无</span>'
         )
         body = (
             f'<tr><th scope="row"><a href="{page.BASE}/">{page.LABEL}</a></th>'
@@ -304,9 +304,7 @@ class Web(Base):
     def competitions_page(self, claims: dict, github: str) -> None:
         held = self.service.granted(github)
         if not held:
-            body = (
-                '<section><p class="hint lead">还没有批准的比赛，在<a href="/">概要</a>申请。</p></section>'
-            )
+            body = '<section><p class="hint lead">这个账号还没有任何比赛的数据。</p></section>'
         else:
             rows = ""
             for c in held:
