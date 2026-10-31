@@ -7,11 +7,13 @@
 - INTERNAL_PORT (8081), for members only (NetworkPolicy): GET /catalog.
 - API_PORT (8082), data.api with no edge policy: a personal key in
   `Authorization: Bearer`, then the same JSON under /v1/, plus a file
-  listing and presigned GETs for downloads.
+  listing and links for downloads.
 
 Every answer is filtered by the competitions members grants the asker
-(access.Grants). Bytes never pass through here: audio, video and downloads
-are presigned URLs on s3.api. Neither keys nor URLs are logged.
+(access.Grants). Audio, video and downloads stream through here from the
+origin on g18, under `<api base>/raw/<file>` with a signed expiry
+(store.Links) that stands in for the cookie or key. Neither keys nor links
+are logged.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from pathlib import Path
 
 from dataservice import access, catalog, page
 from dataservice.kinds import BadRequest, NotFound, roboheard
-from dataservice.store import PUBLIC_ENDPOINT, NotPublished, Releases, Store
+from dataservice.store import BadRange, NotPublished, Releases, Store
 
 WEB_PORT = int(os.environ.get("WEB_PORT", "8080"))
 INTERNAL_PORT = int(os.environ.get("INTERNAL_PORT", "8081"))
@@ -42,13 +44,13 @@ MAX_BODY = 1024
 VIEWS = {"roboheard": roboheard.View}
 STATIC = resources.files(__package__).joinpath("static")
 STATIC_NAME = re.compile(r"[a-z0-9-]+\.(?:js|css)")
-S3_ORIGIN = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(PUBLIC_ENDPOINT))
+RANGE = re.compile(r"bytes=(?:[0-9]+-[0-9]*|-[0-9]+)")
+MEDIA = {".wav": "audio/wav", ".mp4": "video/mp4", ".json": "application/json"}
 
 SECURITY_HEADERS = {
-    # Media and wav ranges come straight from s3.api; everything else is this origin.
     "Content-Security-Policy": (
         "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; "
-        f"script-src 'self'; connect-src 'self' {S3_ORIGIN}; media-src blob: {S3_ORIGIN}; "
+        "script-src 'self'; connect-src 'self'; media-src blob: 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     ),
     "Referrer-Policy": "same-origin",
@@ -88,6 +90,20 @@ class Service:
         if competition is None or competition.id not in self.grants.of(github):
             raise NotFound(competition_id)
         return self.releases.get(competition).view.answer(path, query)
+
+    def raw(self, competition_id: str, name: str, query: dict, byte_range: str | None):
+        """A release file's bytes, for a link this process signed and that has not expired."""
+        competition = self.competitions.get(competition_id)
+        if competition is None or not self.releases.links.valid(competition.id, name, query):
+            raise Expired(name)
+        release = self.releases.get(competition)
+        if name not in release.files:
+            raise NotFound(name)
+        return release.stream(name, byte_range)
+
+
+class Expired(Exception):
+    """A link that this process did not sign, or signed too long ago."""
 
 
 class Base(BaseHTTPRequestHandler):
@@ -129,6 +145,42 @@ class Base(BaseHTTPRequestHandler):
             self.log_message("github:%s %s failed: %s", github, competition_id, type(error).__name__)
             self.answer(502, {"error": "storage unavailable"})
 
+    def raw(self, competition_id: str, rest: list[str], query: dict) -> None:
+        """Copy a linked file, or the one range asked of it, from the origin."""
+        name = "/".join(rest)
+        byte_range = self.headers.get("Range")
+        if byte_range is not None and not RANGE.fullmatch(byte_range.strip()):
+            byte_range = None  # several ranges or another unit: the whole file
+        try:
+            found = self.service.raw(competition_id, name, query, byte_range and byte_range.strip())
+        except Expired:
+            self.answer(403, {"error": "link expired"})
+            return
+        except (NotFound, NotPublished):
+            self.answer(404, {"error": "not found"})
+            return
+        except BadRange:
+            self.send_response(416)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        except Exception as error:  # noqa: BLE001 - the origin or the tunnel
+            self.log_message("%s raw failed: %s", competition_id, type(error).__name__)
+            self.answer(502, {"error": "storage unavailable"})
+            return
+        self.send_response(found.status)
+        self.send_header("Content-Type", MEDIA.get(Path(name).suffix, "application/octet-stream"))
+        self.send_header("Cache-Control", "private, max-age=600")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for header, value in found.headers.items():
+            self.send_header(header, value)
+        self.end_headers()
+        try:
+            for chunk in found.body:
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # a player that moved on
+
     def log_request(self, code="-", size="-") -> None:
         pass
 
@@ -157,13 +209,16 @@ class Api(Base):
         if not split.path.startswith("/v1/"):
             self.answer(404, {"error": "not found"})
             return
+        parts = [urllib.parse.unquote(p) for p in split.path.removeprefix("/v1/").split("/") if p]
+        query = urllib.parse.parse_qs(split.query)
+        if len(parts) > 2 and parts[1] == "raw":
+            self.raw(parts[0], parts[2:], query)  # the link is the credential
+            return
         try:
             github = self.service.keys.owner(self.headers.get("Authorization", ""))
         except access.Unauthenticated:
             self.answer(401, {"error": "a personal key from my.soundadam.com/data/keys is required"})
             return
-        parts = [urllib.parse.unquote(p) for p in split.path.removeprefix("/v1/").split("/") if p]
-        query = urllib.parse.parse_qs(split.query)
         self.log_message("github:%s api %s", github, "/".join(parts[:2]))
         try:
             if not parts:
@@ -202,7 +257,7 @@ class Api(Base):
         if url is None:
             self.answer(404, {"error": "no such file"})
             return
-        self.answer(200, {"url": url, "expires_in": 600})
+        self.answer(200, {"url": f"{API_HOST}/v1/{competition.id}/{url}", "expires_in": 600})
 
 
 class Web(Base):
@@ -272,6 +327,8 @@ class Web(Base):
                 parts = [urllib.parse.unquote(p) for p in path.removeprefix("/api/").split("/") if p]
                 if not parts:
                     self.answer(404, {"error": "not found"})
+                elif len(parts) > 2 and parts[1] == "raw":
+                    self.raw(parts[0], parts[2:], urllib.parse.parse_qs(split.query))
                 else:
                     self.json_view(github, parts[0], parts[1:], urllib.parse.parse_qs(split.query))
             else:

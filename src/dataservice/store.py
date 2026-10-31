@@ -1,22 +1,31 @@
-"""SeaweedFS through its S3 API, and each competition's published release.
+"""The competitions' releases, read through S3 from their origin, and the links that stream them.
 
-Reads go to the in-cluster endpoint with the read-only key (Secret
-`data/s3-read`, confined to the competitions' buckets). Presigned URLs are
-signed for the public endpoint (`s3.api`): the signature covers the host, so
-a URL signed for the ClusterIP would not verify from a browser. Signing is
-local; nothing is sent to SeaweedFS to make one.
+The origin is `rclone serve s3` on g18, beside the originals, reached on
+127.0.0.1 through the pod's SSH tunnel with the origin's read-only key
+(Secret `data/origin`). Nothing is copied off g18: a release is a directory
+of tables plus symlinks to the originals (platform-gitops
+docs/adr/datasets-own-service-per-competition-owner-grants.md).
 
 A release is sealed: the publisher writes `_SUCCESS` last, and a prefix
 without it is not published. The loaded release is kept until `_SUCCESS`
 changes, checked at most every RECHECK_S.
+
+Audio, video and downloads are streamed by this service. A link is the
+file's path plus an expiry and an HMAC under a key drawn at start, so it
+needs neither cookie nor personal key and dies with the process.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import os
+import secrets
 import threading
 import time
-from collections.abc import Callable
+import urllib.parse
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import boto3
@@ -25,12 +34,12 @@ from botocore.exceptions import ClientError
 
 from dataservice.catalog import Competition
 
-ENDPOINT = os.environ.get("S3_ENDPOINT", "http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333")
-PUBLIC_ENDPOINT = os.environ.get("S3_PUBLIC_ENDPOINT", "https://s3.api.soundadam.com")
+ENDPOINT = os.environ.get("S3_ENDPOINT", "http://127.0.0.1:18333")
 # The ADR's ceiling is 15 minutes; a page asks again when it needs a fresh one.
-PRESIGN_S = 600
+LINK_S = 600
 RECHECK_S = 300
 SEALED = "_SUCCESS"
+CHUNK = 256 * 1024
 
 
 def client(endpoint: str) -> Any:
@@ -52,17 +61,45 @@ class NotPublished(Exception):
     """The competition's prefix holds no sealed release (yet)."""
 
 
+class BadRange(Exception):
+    """The asked range lies outside the file."""
+
+
+class Stream:
+    """One GET's answer: status, the headers to pass on, and the body in chunks."""
+
+    def __init__(self, status: int, headers: dict[str, str], body: Iterator[bytes]):
+        self.status = status
+        self.headers = headers
+        self.body = body
+
+
 class Store:
-    def __init__(self, endpoint: str = ENDPOINT, public_endpoint: str = PUBLIC_ENDPOINT) -> None:
+    def __init__(self, endpoint: str = ENDPOINT) -> None:
         self.s3 = client(endpoint)
-        self.public = client(public_endpoint)
 
     def get(self, bucket: str, key: str) -> bytes:
         return self.s3.get_object(Bucket=bucket, Key=key)["Body"].read()
 
-    def etag(self, bucket: str, key: str) -> str | None:
+    def stream(self, bucket: str, key: str, byte_range: str | None) -> Stream:
+        """`key`, or the one range `bytes=a-b` of it, to be copied out in chunks."""
         try:
-            return self.s3.head_object(Bucket=bucket, Key=key)["ETag"]
+            found = self.s3.get_object(
+                Bucket=bucket, Key=key, **({"Range": byte_range} if byte_range else {})
+            )
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") == "InvalidRange":
+                raise BadRange(key) from error
+            raise
+        headers = {"Content-Length": str(found["ContentLength"]), "Accept-Ranges": "bytes"}
+        if found.get("ContentRange"):
+            headers["Content-Range"] = found["ContentRange"]
+        return Stream(206 if "Content-Range" in headers else 200, headers, found["Body"].iter_chunks(CHUNK))
+
+    def seal(self, bucket: str, key: str) -> str | None:
+        """What identifies this version of `key`, or None when it is absent."""
+        try:
+            found = self.s3.head_object(Bucket=bucket, Key=key)
         except ClientError as error:
             if error.response.get("Error", {}).get("Code") in (
                 "404",
@@ -72,6 +109,8 @@ class Store:
             ):
                 return None
             raise
+        # The origin serves no ETag (hashing the originals would read them all).
+        return f"{found.get('ETag', '')}|{found.get('LastModified', '')}|{found.get('ContentLength', '')}"
 
     def listing(self, bucket: str, prefix: str) -> dict[str, int]:
         """Key below `prefix` → size, for every object under it."""
@@ -81,17 +120,49 @@ class Store:
                 found[item["Key"].removeprefix(prefix)] = item["Size"]
         return found
 
-    def presign(self, bucket: str, key: str, seconds: int = PRESIGN_S) -> str:
-        return self.public.generate_presigned_url(
-            "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=seconds
-        )
+
+class Links:
+    """Expiring links to a release's files, signed with a key that lives only in this process."""
+
+    def __init__(self, key: bytes | None = None, clock: Callable[[], float] = time.time):
+        self.key = key or secrets.token_bytes(32)
+        self.clock = clock
+
+    def mac(self, competition_id: str, name: str, expires: int) -> str:
+        message = f"{competition_id}\n{name}\n{expires}".encode()
+        digest = hmac.new(self.key, message, hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+    def link(self, competition_id: str, name: str, seconds: int = LINK_S) -> str:
+        """`raw/<name>?expires=…&sig=…`, relative to the competition's API base."""
+        expires = int(self.clock()) + seconds
+        query = urllib.parse.urlencode({"expires": expires, "sig": self.mac(competition_id, name, expires)})
+        return f"raw/{urllib.parse.quote(name)}?{query}"
+
+    def valid(self, competition_id: str, name: str, query: dict[str, list[str]]) -> bool:
+        try:
+            expires = int(query.get("expires", [""])[0])
+        except ValueError:
+            return False
+        if expires < self.clock():
+            return False
+        return hmac.compare_digest(self.mac(competition_id, name, expires), query.get("sig", [""])[0])
 
 
 class Release:
     """One competition's sealed files: their listing, plus what its kind loaded from them."""
 
-    def __init__(self, store: Store, competition: Competition, seal: str, files: dict[str, int], view: Any):
+    def __init__(
+        self,
+        store: Store,
+        links: Links,
+        competition: Competition,
+        seal: str,
+        files: dict[str, int],
+        view: Any,
+    ):
         self.store = store
+        self.links = links
         self.competition = competition
         self.seal = seal
         self.files = files
@@ -102,18 +173,22 @@ class Release:
         return self.store.get(self.competition.bucket, self.competition.prefix + name)
 
     def url(self, name: str) -> str | None:
-        """A presigned GET for `name`, a file of this release, or None when it holds no such file."""
+        """A link to `name`, a file of this release, or None when it holds no such file."""
         if name not in self.files:
             return None
-        return self.store.presign(self.competition.bucket, self.competition.prefix + name)
+        return self.links.link(self.competition.id, name)
+
+    def stream(self, name: str, byte_range: str | None) -> Stream:
+        return self.store.stream(self.competition.bucket, self.competition.prefix + name, byte_range)
 
 
 class Releases:
     """The loaded release of each competition, reloaded when its seal changes."""
 
-    def __init__(self, store: Store, views: dict[str, Callable[[Release], Any]]):
+    def __init__(self, store: Store, views: dict[str, Callable[[Release], Any]], links: Links | None = None):
         self.store = store
         self.views = views
+        self.links = links or Links()
         self.loaded: dict[str, Release] = {}
         self.lock = threading.Lock()
 
@@ -122,7 +197,7 @@ class Releases:
             current = self.loaded.get(competition.id)
             if current is not None and time.monotonic() - current.checked < RECHECK_S:
                 return current
-            seal = self.store.etag(competition.bucket, competition.prefix + SEALED)
+            seal = self.store.seal(competition.bucket, competition.prefix + SEALED)
             if seal is None:
                 self.loaded.pop(competition.id, None)
                 raise NotPublished(competition.id)
@@ -130,7 +205,7 @@ class Releases:
                 current.checked = time.monotonic()
                 return current
             files = self.store.listing(competition.bucket, competition.prefix)
-            release = Release(self.store, competition, seal, files, None)
+            release = Release(self.store, self.links, competition, seal, files, None)
             release.view = self.views[competition.kind](release)
             self.loaded[competition.id] = release
             return release
