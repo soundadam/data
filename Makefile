@@ -8,6 +8,7 @@ check: lint test
 lint:
 	uv run --frozen ruff check src tests
 	uv run --frozen ruff format --check src tests
+	for f in src/dataservice/static/*.js; do node --check $$f || exit 1; done
 
 test:
 	uv run --frozen pytest
