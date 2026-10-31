@@ -317,12 +317,12 @@
       h("section", null, h("h2", null, "挖掘查询"), table([["查询"], ["说明"], ["片段", 1], ["会话", 1], ["分钟", 1]],
         o.queries.map((q) => h("tr", null,
           h("th", { scope: "row" }, h("a", { href: `#/q/${q.name}/0` }, q.name)), h("td", null, text(q.note)),
-          h("td", { class: "num" }, text(q.segments)), h("td", { class: "num" }, text(q.sessions)), h("td", { class: "num" }, num(q.minutes, 1))))))),
+          h("td", { class: "num" }, text(q.segments)), h("td", { class: "num" }, text(q.sessions)), h("td", { class: "num" }, num(q.minutes, 1)))))),
       h("section", null, h("h2", null, "会话"), table(sessionHeads, o.sessions.map((x) => h("tr", null,
         h("th", { scope: "row" }, h("a", { href: `#/s/${x.session}/0` }, x.session)),
         h("td", { class: "num" }, num(x.dur / 60, 1)), h("td", { class: "num" }, text(x.n_speakers)),
         h("td", { class: "num" }, pct(x.human_speech, x.dur)), h("td", { class: "num" }, num(x.overlap_2plus, 0)),
-        h("td", { class: "num" }, num(x.robot_speech, 0)), h("td", null, x.has_aec ? "有" : "—"), h("td", null, text(x.dead_channels))))))),
+        h("td", { class: "num" }, num(x.robot_speech, 0)), h("td", null, x.has_aec ? "有" : "—"), h("td", null, text(x.dead_channels)))))),
       h("details", null, h("summary", null, "stats.json"), h("pre", null, JSON.stringify(st, null, 2))),
     );
   }
