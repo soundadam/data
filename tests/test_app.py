@@ -94,7 +94,7 @@ def test_web_lists_granted_competitions(ports):
     page = body.decode()
     assert status == 200 and headers["Cache-Control"] == "no-store"
     assert "script-src 'self'" in headers["Content-Security-Policy"]
-    assert "https://s3.api.soundadam.com" in headers["Content-Security-Policy"]
+    assert "media-src blob: 'self';" in headers["Content-Security-Policy"]
     assert 'href="/data/c/roboheard-2027/"' in page and "已发布" in page
 
     status, _, body = web(ports, "/", {**MEMBER, "github_user_id": "8"})
@@ -158,7 +158,13 @@ def test_keys_actions_and_api(ports):
     status, _, body = ports.call("api", "GET", "/v1/roboheard-2027/files", bearer)
     assert "Audio/S001.wav" in {f["key"] for f in json.loads(body)["files"]}
     status, _, body = ports.call("api", "GET", "/v1/roboheard-2027/presign?key=Audio/S001.wav", bearer)
-    assert status == 200 and json.loads(body)["url"].startswith("https://s3.api.example/")
+    url = json.loads(body)["url"]
+    assert status == 200 and url.startswith(
+        "https://data.api.soundadam.com/v1/roboheard-2027/raw/Audio/S001.wav?"
+    )
+    link = url.removeprefix("https://data.api.soundadam.com")
+    status, headers, body = ports.call("api", "GET", link)  # no key: the link is the credential
+    assert status == 200 and body == b"RIFF0123456789" and headers["Content-Type"] == "audio/wav"
     assert ports.call("api", "GET", "/v1/roboheard-2027/presign?key=../x", bearer)[0] == 404
     status, _, body = ports.call("api", "GET", "/v1/roboheard-2027/query/overlap", bearer)
     assert status == 200 and json.loads(body)["total"] == 2
@@ -176,3 +182,24 @@ def test_api_follows_grants(ports, service):
     assert status == 200 and json.loads(body) == {"competitions": []}
     assert ports.call("api", "GET", "/v1/roboheard-2027/files", bearer)[0] == 404
     assert ports.call("api", "GET", "/v1/roboheard-2027/overview", bearer)[0] == 404
+
+
+def test_media_streams_through_signed_links_with_ranges(ports):
+    status, _, body = web(ports, "/api/roboheard-2027/session/S001")
+    assert status == 200
+    link = json.loads(body)["media"]["audio"]
+    path = "/api/roboheard-2027/" + link
+
+    status, headers, body = web(ports, path, headers={"Range": "bytes=4-7"})
+    assert status == 206 and body == b"0123" and headers["Content-Range"] == "bytes 4-7/14"
+    status, _, body = web(ports, path, headers={"Range": "bytes=-2"})
+    assert status == 206 and body == b"89"
+    assert web(ports, path, headers={"Range": "bytes=99-"})[0] == 416
+    status, _, body = web(ports, path, headers={"Range": "bytes=0-1,4-5"})  # several ranges: the whole file
+    assert status == 200 and body == b"RIFF0123456789"
+
+    assert web(ports, path.replace("S001.wav", "S002.wav"))[0] == 403
+    assert web(ports, path.replace("sig=", "sig=x"))[0] == 403
+    assert web(ports, "/api/roboheard-2027/raw/Audio/S001.wav")[0] == 403
+    assert ports.call("api", "GET", "/v1/roboheard-2027/" + link)[0] == 200
+    assert ports.call("api", "GET", "/v1/other/" + link)[0] == 403

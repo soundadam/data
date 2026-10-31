@@ -5,11 +5,11 @@
 //   #/s/<S>/<from>     a session's timeline, one window from <from> s
 //   #/g/<seg_id>       one segment: context, channels, video
 //
-// The JSON comes from data-api (this origin). Audio never passes through the
-// service: the page reads the wav header and then only the span's bytes from
-// the presigned URL with HTTP Range, picks or averages channels here, and
-// plays a mono WAV it builds. Video is the presigned mp4, muted and seeked,
-// following the audio.
+// The JSON and the media come from this origin. Media links are relative to
+// the API base (raw/<file>?expires=…&sig=…): the page reads the wav header
+// and then only the span's bytes with HTTP Range, picks or averages channels
+// here, and plays a mono WAV it builds. Video is the linked mp4, muted and
+// seeked, following the audio.
 (function () {
   "use strict";
 
@@ -191,6 +191,10 @@
 
   function objectPath(url) {
     return new URL(url).pathname;
+  }
+
+  function linked(url) {
+    return new URL(url, new URL(API + "/", location.href)).href;
   }
 
   async function ranged(url, first, last) {
@@ -410,7 +414,7 @@
       }
       status.textContent = "读取中…";
       try {
-        const span = await spanBytes(which, data.media[which], a, b);
+        const span = await spanBytes(which, linked(data.media[which]), a, b);
         samples = mono(span, channels());
         const was = audio.src;
         audio.src = URL.createObjectURL(wavBlob(samples, span.info.rate));
@@ -433,7 +437,7 @@
       video = h("video", { muted: true, playsinline: true, preload: "metadata" });
       video.muted = true;
       const setCam = (cam) => {
-        video.src = data.media.video[cam];
+        video.src = linked(data.media.video[cam]);
         video.addEventListener("loadedmetadata", () => { video.currentTime = a + (audio.currentTime || 0); }, { once: true });
       };
       camPick = h("select", null, cams.map((c) => h("option", { value: c }, c)));

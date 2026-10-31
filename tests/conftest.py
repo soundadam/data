@@ -1,4 +1,4 @@
-"""A fake SeaweedFS holding one tiny, synthetic roboheard release."""
+"""A fake origin holding one tiny, synthetic roboheard release."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from dataservice import catalog
+from dataservice.store import BadRange, Stream
 
 PREFIX = "train-v1/"
 
@@ -70,7 +71,7 @@ def release_files() -> dict[str, bytes]:
             }
         ),
         "frames/S001.parquet": parquet({"mic_db": mic, "ref_db": np.full(200, -70.0, dtype=np.float32)}),
-        "Audio/S001.wav": b"RIFF",
+        "Audio/S001.wav": b"RIFF0123456789",
         "Video/V001-head_leftImg.mp4": b"\0",
         "_SUCCESS": b"",
     }
@@ -89,9 +90,23 @@ class FakeStore:
         self.reads += 1
         return self.objects[(bucket, key)]
 
-    def etag(self, bucket, key):
+    def seal(self, bucket, key):
         body = self.objects.get((bucket, key))
         return None if body is None else f'"{len(body)}-{hash(body)}"'
+
+    def stream(self, bucket, key, byte_range):
+        body = self.objects[(bucket, key)]
+        if byte_range is None:
+            return Stream(200, {"Content-Length": str(len(body))}, iter([body]))
+        first, _, last = byte_range.removeprefix("bytes=").partition("-")
+        start, stop = (
+            (len(body) - int(last), len(body) - 1) if not first else (int(first), int(last or len(body) - 1))
+        )
+        if start >= len(body):
+            raise BadRange(key)
+        part = body[start : stop + 1]
+        headers = {"Content-Length": str(len(part)), "Content-Range": f"bytes {start}-{stop}/{len(body)}"}
+        return Stream(206, headers, iter([part]))
 
     def listing(self, bucket, prefix):
         return {
@@ -99,9 +114,6 @@ class FakeStore:
             for (b, k), v in self.objects.items()
             if b == bucket and k.startswith(prefix)
         }
-
-    def presign(self, bucket, key, seconds=600):
-        return f"https://s3.api.example/{bucket}/{key}?X-Amz-Signature=fake"
 
 
 @pytest.fixture

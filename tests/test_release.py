@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import urllib.parse
+
 import pytest
 
 from conftest import release_files
@@ -84,7 +86,7 @@ def test_out_of_range_parameters_are_refused(view, query):
 def test_session_has_lanes_and_only_published_media(view):
     found = view.answer(["session", "S001"], {})
     assert [s["seg_id"] for s in found["segments"]] == ["S001-P0001-0001", "S001-P0002-0001", "S001-R-0001"]
-    assert found["media"]["audio"].startswith("https://s3.api.example/roboheard/train-v1/Audio/S001.wav")
+    assert found["media"]["audio"].startswith("raw/Audio/S001.wav?expires=")
     assert found["media"]["aec"] is None
     assert list(found["media"]["video"]) == ["head_leftImg"]
 
@@ -117,3 +119,19 @@ def test_frames_bucket_of_only_nan_is_null(store, competition):
     view = Releases(store, {"roboheard": roboheard.View}).get(competition).view
     found = view.answer(["frames", "S001"], {"from": ["0"], "to": ["1"], "points": ["10"]})
     assert found["mic_db"] == [None] * 7 + [-30.0] * 3
+
+
+def test_links_expire_and_bind_competition_and_file():
+    now = [1000.0]
+    links = store_module.Links(b"k" * 32, clock=lambda: now[0])
+    link = links.link("roboheard-2027", "Audio/S001.wav")
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(link).query)
+    assert links.valid("roboheard-2027", "Audio/S001.wav", query)
+    assert not links.valid("roboheard-2027", "Audio/S002.wav", query)
+    assert not links.valid("other", "Audio/S001.wav", query)
+    assert not store_module.Links(b"j" * 32, clock=lambda: now[0]).valid(
+        "roboheard-2027", "Audio/S001.wav", query
+    )
+    assert not links.valid("roboheard-2027", "Audio/S001.wav", {**query, "expires": ["99999999999"]})
+    now[0] += store_module.LINK_S + 1
+    assert not links.valid("roboheard-2027", "Audio/S001.wav", query)

@@ -9,7 +9,7 @@ The release holds
   every mining query in the order the listen page draws them;
 - `frames/<session>.parquet`, frame levels in dB (mic_db, ref_db, aec_db);
 - `Audio/<session>.wav`, `Audio_AEC/<session>.wav` and
-  `Video/V<nnn>-<camera>.mp4`, the originals, reached only by presigned URL.
+  `Video/V<nnn>-<camera>.mp4`, the originals, reached only by link.
 
 Everything here is metadata. The tables go into one in-memory DuckDB per
 release; frames are read per session when a timeline asks for them.
@@ -222,7 +222,7 @@ class View:
         }
 
     def media(self, session: str) -> dict:
-        """Presigned GETs for the session's originals this release holds."""
+        """Links to the session's originals this release holds, relative to the API base."""
         video = {}
         for camera in CAMERAS:
             url = self.release.url(f"Video/V{session[1:]}-{camera}.mp4")

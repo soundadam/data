@@ -3,20 +3,22 @@
 The lab's competition datasets, for members granted a competition:
 `my.soundadam.com/data/` for people, `data.api.soundadam.com` for scripts.
 Why it is shaped this way: platform-gitops
-`docs/adr/datasets-own-service-per-competition-grants-on-request.md`.
+`docs/adr/datasets-own-service-per-competition-owner-grants.md`.
 
 - **Catalog**: [`catalog.json`](src/dataservice/catalog.json). Each
   competition has an id, a title, a kind (its viewer, `kinds/`), and its
-  release: one bucket and a prefix in SeaweedFS.
-- **Grants**: members owns who holds which competition (request on the
-  overview, the owner approves). This service asks `GET /data/<github id>`
+  release: one bucket and a prefix on the origin, `rclone serve s3` on g18.
+- **Grants**: members owns who holds which competition (the owner grants
+  it; there is no request). This service asks `GET /data/<github id>`
   on members' internal port and keeps the answer at most 60 s.
 - **Releases**: a prefix is published once the publisher writes `_SUCCESS`
   last. The tables are read into memory (DuckDB), and the service reloads
   when `_SUCCESS` changes.
-- **Bytes**: audio, video and downloads never pass through the service.
-  Pages and scripts get presigned GETs on `s3.api.soundadam.com`, valid for
-  10 minutes.
+- **Bytes**: the origin is reachable only from this pod, through its SSH
+  tunnel to g18. Pages and scripts get signed links to `<api base>/raw/<file>`,
+  valid for 10 minutes and bound to one competition and file; the service
+  streams the file from the origin with HTTP Range. When g18 cannot be
+  reached, the link answers 502.
 
 ## Ports
 
@@ -58,15 +60,14 @@ Each view leads to a segment, which has:
 - video from any published camera, muted and following the audio.
 
 The browser reads the wav header and then only the span's bytes, using
-HTTP Range on the presigned URL.
+HTTP Range on the signed link.
 
 ## Environment
 
 | Variable | Default |
 | --- | --- |
-| `S3_ENDPOINT` | `http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333` |
-| `S3_PUBLIC_ENDPOINT` | `https://s3.api.soundadam.com` (presigned URLs and the CSP) |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | the read-only key, Secret `data/s3-read` |
+| `S3_ENDPOINT` | `http://127.0.0.1:18333` (the tunnel's local end) |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | the origin's `--auth-key`, Secret `data/origin` |
 | `MEMBERS_URL` | `http://members.members.svc.cluster.local:8081` |
 | `STATE_DIR` | `/var/lib/data` |
 | `PORTAL_ORIGIN` | `https://my.soundadam.com` (the Origin actions must carry) |
