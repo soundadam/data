@@ -45,7 +45,13 @@ VIEWS = {"roboheard": roboheard.View}
 STATIC = resources.files(__package__).joinpath("static")
 STATIC_NAME = re.compile(r"[a-z0-9-]+\.(?:js|css)")
 RANGE = re.compile(r"bytes=(?:[0-9]+-[0-9]*|-[0-9]+)")
-MEDIA = {".wav": "audio/wav", ".mp4": "video/mp4", ".json": "application/json"}
+MEDIA = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".jpg": "image/jpeg",
+    ".mp4": "video/mp4",
+    ".json": "application/json",
+}
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
@@ -447,6 +453,7 @@ class Web(Base):
             scripts=(f"{competition.kind}.js",),
             styles=(f"{competition.kind}.css",),
             data={"api": f"{page.BASE}/api/{competition.id}", "base": f"{page.BASE}/c/{competition.id}/"},
+            wide=True,
         )
 
     def do_POST(self) -> None:  # noqa: N802

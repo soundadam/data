@@ -212,6 +212,7 @@ def page(
     scripts: tuple[str, ...] = (),
     styles: tuple[str, ...] = (),
     data: dict | None = None,
+    wide: bool = False,
 ) -> str:
     """A whole console page. `heading` and `body` are trusted HTML; scripts and styles are under /static/."""
     attrs = "".join(f' data-{name}="{html.escape(value)}"' for name, value in (data or {}).items())
@@ -231,7 +232,7 @@ def page(
 <link rel="stylesheet" href="{BASE}/static/data.css">{links}
 {tags}
 </head><body>
-{site_bar_html(DESIGN, html.escape(claims_name), THEME_PICK, held, hat)}<div class="console-shell">{sidebar_html(held, "/", hat)}
+{site_bar_html(DESIGN, html.escape(claims_name), THEME_PICK, held, hat)}<div class="console-shell{" wide" if wide else ""}">{sidebar_html(held, "/", hat)}
 <main class="console"{attrs}>
 {trail}<h1>{heading}</h1>
 {body}

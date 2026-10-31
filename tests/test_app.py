@@ -111,7 +111,7 @@ def test_row_fragment(ports):
 def test_members_down_is_503(ports):
     down = {**MEMBER, "github_user_id": "999"}
     assert web(ports, "/", down)[0] == 503
-    assert web(ports, "/api/roboheard-2027/overview", down)[0] == 503
+    assert web(ports, "/api/roboheard-2027/sessions", down)[0] == 503
 
 
 def test_viewer_shell_and_json(ports):
@@ -122,17 +122,16 @@ def test_viewer_shell_and_json(ports):
     assert "<script>" not in page  # no inline script: CSP script-src 'self'
 
     assert web(ports, "/c/roboheard-2027")[0] == 302
-    status, _, body = web(ports, "/api/roboheard-2027/overview")
-    assert status == 200 and json.loads(body)["queries"][0]["name"] == "overlap"
-    assert web(ports, "/api/roboheard-2027/query/overlap?limit=999")[0] == 400
+    status, _, body = web(ports, "/api/roboheard-2027/sessions")
+    assert status == 200 and json.loads(body)["sessions"][0]["session"] == "S001"
     assert web(ports, "/api/roboheard-2027/session/S404")[0] == 404
 
 
 def test_ungranted_competition_is_not_found(ports):
     other = {**MEMBER, "github_user_id": "8"}
-    assert web(ports, "/api/roboheard-2027/overview", other)[0] == 404
+    assert web(ports, "/api/roboheard-2027/sessions", other)[0] == 404
     assert web(ports, "/c/roboheard-2027/", other)[0] == 302
-    assert web(ports, "/api/elsewhere/overview")[0] == 404
+    assert web(ports, "/api/elsewhere/sessions")[0] == 404
 
 
 def test_static_files(ports):
@@ -166,8 +165,8 @@ def test_keys_actions_and_api(ports):
     status, headers, body = ports.call("api", "GET", link)  # no key: the link is the credential
     assert status == 200 and body == b"RIFF0123456789" and headers["Content-Type"] == "audio/wav"
     assert ports.call("api", "GET", "/v1/roboheard-2027/presign?key=../x", bearer)[0] == 404
-    status, _, body = ports.call("api", "GET", "/v1/roboheard-2027/query/overlap", bearer)
-    assert status == 200 and json.loads(body)["total"] == 2
+    status, _, body = ports.call("api", "GET", "/v1/roboheard-2027/session/S001", bearer)
+    assert status == 200 and json.loads(body)["session"]["session"] == "S001"
 
     other = {**MEMBER, "github_user_id": "8"}
     assert action(ports, "/actions/revoke", {"id": issued["id"]}, other)[0] == 400
@@ -181,24 +180,25 @@ def test_api_follows_grants(ports, service):
     status, _, body = ports.call("api", "GET", "/v1/", bearer)
     assert status == 200 and json.loads(body) == {"competitions": []}
     assert ports.call("api", "GET", "/v1/roboheard-2027/files", bearer)[0] == 404
-    assert ports.call("api", "GET", "/v1/roboheard-2027/overview", bearer)[0] == 404
+    assert ports.call("api", "GET", "/v1/roboheard-2027/sessions", bearer)[0] == 404
 
 
 def test_media_streams_through_signed_links_with_ranges(ports):
     status, _, body = web(ports, "/api/roboheard-2027/session/S001")
     assert status == 200
-    link = json.loads(body)["media"]["audio"]
+    link = json.loads(body)["signals"]["mean"]["mp3"]
     path = "/api/roboheard-2027/" + link
 
     status, headers, body = web(ports, path, headers={"Range": "bytes=4-7"})
     assert status == 206 and body == b"0123" and headers["Content-Range"] == "bytes 4-7/14"
+    assert headers["Content-Type"] == "audio/mpeg"
     status, _, body = web(ports, path, headers={"Range": "bytes=-2"})
     assert status == 206 and body == b"89"
     assert web(ports, path, headers={"Range": "bytes=99-"})[0] == 416
     status, _, body = web(ports, path, headers={"Range": "bytes=0-1,4-5"})  # several ranges: the whole file
-    assert status == 200 and body == b"RIFF0123456789"
+    assert status == 200 and body == b"ID3!0123456789"
 
-    assert web(ports, path.replace("S001.wav", "S002.wav"))[0] == 403
+    assert web(ports, path.replace("mean.mp3", "mic1.mp3"))[0] == 403
     assert web(ports, path.replace("sig=", "sig=x"))[0] == 403
     assert web(ports, "/api/roboheard-2027/raw/Audio/S001.wav")[0] == 403
     assert ports.call("api", "GET", "/v1/roboheard-2027/" + link)[0] == 200
