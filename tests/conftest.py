@@ -6,7 +6,6 @@ import base64
 import io
 import json
 
-import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -40,6 +39,9 @@ def release_files() -> dict[str, bytes]:
         "ov_robot": [0.0, 0.0, 0.0, 0.0],
         "snr_db": [12.5, float("nan"), 3.0, 9.0],
         "ref_db": [-60.0, -60.0, -20.0, -70.0],
+        "gender": ["f", "m", None, "f"],
+        "age": [31.0, float("nan"), None, 31.0],
+        "origin": ["江苏", "四川", None, "江苏"],
     }
     sessions = {
         "session": ["S001", "S002"],
@@ -51,26 +53,24 @@ def release_files() -> dict[str, bytes]:
         "has_aec": [True, False],
         "dead_channels": ["", "3"],
     }
-    mic = np.full(200, -50.0, dtype=np.float32)
-    mic[20:60] = -20.0
-    mic[100] = np.nan
+    listen = {
+        "signals": ["mic1", "mic2", "mean", "ref", "aec1"],
+        "hop_s": 0.02,
+        "tile": 4096,
+        "rows": 128,
+        "aec_shift_s": {"S001": 0.07375},
+    }
     return {
-        "index.json": json.dumps({"version": 3, "sessions": 2, "frame_hop_s": 0.05, "cameras": []}).encode(),
-        "stats.json": json.dumps({"sessions": {"n": 2, "hours": 0.004}}).encode(),
-        "queries.json": json.dumps(
-            [{"name": "overlap", "note": "two at once", "order": None}, {"name": "empty", "note": ""}]
+        "index.json": json.dumps(
+            {"version": 3, "sessions": 2, "cameras": [], "code": "abc1234", "listen": listen}
         ).encode(),
         "sessions.parquet": parquet(sessions),
         "segments.parquet": parquet(segments),
-        "speakers.parquet": parquet({"speaker": ["P0001", "P0002"], "gender": ["f", "m"]}),
-        "mining.parquet": parquet(
-            {
-                "query": ["overlap", "overlap"],
-                "seg_id": ["S001-P0002-0001", "S001-P0001-0001"],
-                "rank": [0, 1],
-            }
-        ),
-        "frames/S001.parquet": parquet({"mic_db": mic, "ref_db": np.full(200, -70.0, dtype=np.float32)}),
+        "listen/S001/mic1.mp3": b"ID3",
+        "listen/S001/mic1.jpg": b"\xff\xd8",
+        "listen/S001/mean.mp3": b"ID3!0123456789",
+        "listen/S001/mean.jpg": b"\xff\xd8",
+        "listen/S001/ref.mp3": b"ID3",  # no sheet: not offered
         "Audio/S001.wav": b"RIFF0123456789",
         "Video/V001-head_leftImg.mp4": b"\0",
         "_SUCCESS": b"",

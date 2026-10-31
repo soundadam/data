@@ -1,32 +1,31 @@
-// The RoboHEARD viewer (kind roboheard): what rh_preview showed, in the browser.
+// The RoboHEARD viewer (kind roboheard): rh_preview's whole-session player.
 //
-//   #/                 the release: stats, mining queries, sessions
-//   #/q/<query>/<n>    a mining query's hits from the n-th
-//   #/s/<S>/<from>     a session's timeline, one window from <from> s
-//   #/g/<seg_id>       one segment: context, channels, video
+//   #/s/<S>   one session: video, a chosen signal, its spectrogram, the
+//             speaker lanes and the transcript on one clock
 //
-// The JSON and the media come from this origin. Media links are relative to
-// the API base (raw/<file>?expires=…&sig=…): the page reads the wav header
-// and then only the span's bytes with HTTP Range, picks or averages channels
-// here, and plays a mono WAV it builds. Video is the linked mp4, muted and
-// seeked, following the audio.
+// Every signal was encoded once at publish: listen/<S>/<signal>.mp3, and its
+// spectrogram as one JPEG of tiles stacked top to bottom. Audio is the clock;
+// the video is the published mp4, muted and following it. Media links are
+// relative to the API base and expire, so a media error fetches the session
+// again and carries the position over.
 (function () {
   "use strict";
 
   const main = document.querySelector("main.console");
   const root = document.getElementById("view");
   const API = main.dataset.api;
-  const WINDOW_S = 60;
-  const PADS = [0, 0.5, 1, 2, 5, 10];
-  const LANE = 18;
-  const SVGNS = "http://www.w3.org/2000/svg";
-  const CURVES = [["mic_db", "麦克风", 2], ["aec_db", "AEC", 3], ["ref_db", "回声参考", 4]];
-  const SEG_HEAD = [["seg_id", "片段"], ["speaker", "说话人"], ["start", "开始 s"], ["dur", "时长 s"],
-    ["n_ov_spk", "重叠人数"], ["ov_human", "人声重叠 s"], ["ov_robot", "机器人重叠 s"],
-    ["snr_db", "SNR dB"], ["ref_db", "参考 dB"], ["flags", "标记"], ["text", "文本"]];
+  const SIGNALS = [["mic", "阵列麦克风"], ["mean", "6 路平均"], ["aec", "AEC"], ["ref", "回声参考"]];
+  const MICS = [1, 2, 3, 4, 5, 6];
+  const WINDOWS = [5, 10, 30, 60];
+  const RATES = [0.75, 1, 1.25, 1.5, 2];
+  const ROBOT = "机器人";
+  const LANE = 20, OV_SPEC = 44, OV_LANE = 5, AXIS = 16, DET_SPEC = 170;
+  const PREFS = "rh-player", POSITION = "rh-position";
   let generation = 0;
+  let sessions = null; // the release's list, fetched once
+  let active = null; // the player on screen: {toggle, seek, size, stop}
 
-  // --- DOM ---------------------------------------------------------------
+  // --- DOM and storage ---------------------------------------------------------
 
   function h(tag, props, ...children) {
     const node = document.createElement(tag);
@@ -40,31 +39,35 @@
     return node;
   }
 
-  function s(tag, attrs, ...children) {
-    const node = document.createElementNS(SVGNS, tag);
-    for (const [name, value] of Object.entries(attrs || {})) node.setAttribute(name, value);
-    node.append(...children);
-    return node;
+  function stored(kind, key) {
+    try {
+      return JSON.parse(window[kind].getItem(key) || "null");
+    } catch {
+      return null;
+    }
   }
 
-  function num(value, digits = 1) {
-    return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "—";
+  function keep(kind, key, value) {
+    try {
+      window[kind].setItem(key, JSON.stringify(value));
+    } catch {
+      // a private window: nothing is remembered
+    }
   }
 
-  function text(value) {
-    return value === null || value === undefined || value === "" ? "—" : String(value);
+  const prefs = { sig: "mic", mic: 1, cam: "", win: 10, rate: 1, ...stored("localStorage", PREFS) };
+
+  function fmt(t) {
+    t = Math.max(0, t);
+    return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
   }
 
-  function pct(part, whole) {
-    return whole ? Math.round((100 * part) / whole) + "%" : "—";
-  }
-
-  function show(...nodes) {
-    root.replaceChildren(...nodes);
+  function fixed(value, digits) {
+    return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : null;
   }
 
   function failed(error) {
-    show(h("section", null, h("p", { class: "hint lead", role: "alert" }, "读不到：" + error.message)));
+    root.replaceChildren(h("p", { class: "hint lead", role: "alert" }, "读不到：" + error.message));
   }
 
   async function get(path) {
@@ -81,427 +84,412 @@
     return response.json();
   }
 
-  function tiles(items) {
-    return h("div", { class: "tiles" }, items.map(([label, figure]) =>
-      h("div", { class: "tile" }, h("p", { class: "label" }, label), h("p", { class: "figure" }, figure))));
-  }
-
-  function table(heads, rows) {
-    return h("div", { class: "table-wrap" }, h("table", { class: "data" },
-      h("thead", null, h("tr", null, heads.map(([label, numeric]) => h("th", { class: numeric ? "num" : null }, label)))),
-      h("tbody", null, rows)));
-  }
-
-  function kv(pairs) {
-    return h("dl", { class: "kv" }, pairs.filter(([, v]) => v !== null && v !== undefined && v !== "")
-      .map(([k, v]) => [h("dt", null, k), h("dd", null, typeof v === "number" ? num(v, 3) : String(v))]));
-  }
-
-  function back(...links) {
-    return h("nav", { class: "segmented", "aria-label": "视图" },
-      links.map(([href, label, current]) => h("a", { href, "aria-current": current ? "page" : null }, label)));
-  }
-
-  function segRow(seg, current) {
-    return h("tr", null, SEG_HEAD.map(([key]) => {
-      const value = seg[key];
-      if (key === "seg_id") {
-        return h("th", { scope: "row" }, h("a", { href: "#/g/" + value, "aria-current": value === current ? "true" : null }, value));
-      }
-      if (key === "text") return h("td", { class: "rh-long" }, text(value));
-      if (typeof value === "number") return h("td", { class: "num" }, num(value, key.startsWith("n_") ? 0 : 2));
-      return h("td", null, text(value || (key === "speaker" ? "robot" : value)));
-    }));
-  }
-
-  // --- plots: energy, lanes, axis ------------------------------------------
-
-  // Frame levels over [a, b), each curve a path broken where a frame is null.
-  function energy(levels, a, b) {
-    const values = CURVES.flatMap(([key]) => (levels[key] || []).filter((v) => v !== null));
-    if (!values.length) return null;
-    const low = Math.min(...values), high = Math.max(...values), span = Math.max(1, high - low);
-    const height = 120;
-    const svg = s("svg", { class: "rh-energy", viewBox: `0 0 1000 ${height}`, preserveAspectRatio: "none", height });
-    for (const [key, , series] of CURVES) {
-      const curve = levels[key];
-      if (!curve) continue;
-      let d = "", pen = false;
-      curve.forEach((v, i) => {
-        const t = levels.from + (i + 0.5) * levels.step;
-        if (v === null || t < a || t > b) {
-          pen = false;
-          return;
-        }
-        const x = ((t - a) / (b - a)) * 1000, y = height - ((v - low) / span) * (height - 4) - 2;
-        d += (pen ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
-        pen = true;
-      });
-      svg.append(s("path", { d, class: "series-" + series }));
-    }
-    const legend = h("ul", { class: "legend" }, CURVES.filter(([key]) => levels[key])
-      .map(([, label, series]) => h("li", { class: "series-" + series }, h("span", { class: "swatch" }), label)),
-      h("li", null, `${num(low, 0)} … ${num(high, 0)} dB`));
-    return [svg, legend];
-  }
-
-  function laneOf(seg) {
-    return seg.kind === "robot" || !seg.speaker ? "robot" : seg.speaker;
-  }
-
-  // One row per speaker, robot last; a click opens the segment.
-  function lanes(segments, a, b, current, mark) {
-    const inside = segments.filter((g) => g.end > a && g.start < b);
-    const names = [...new Set(inside.map(laneOf))].sort((x, y) => (x === "robot") - (y === "robot") || x.localeCompare(y));
-    const height = Math.max(1, names.length) * LANE;
-    const svg = s("svg", { class: "rh-lanes", viewBox: `0 0 1000 ${height}`, preserveAspectRatio: "none", height });
-    if (mark) {
-      svg.append(s("rect", { class: "rh-mark", x: ((mark[0] - a) / (b - a)) * 1000, y: 0,
-        width: Math.max(1, ((mark[1] - mark[0]) / (b - a)) * 1000), height }));
-    }
-    names.forEach((_, i) => svg.append(s("line", { x1: 0, x2: 1000, y1: (i + 1) * LANE, y2: (i + 1) * LANE })));
-    for (const g of inside) {
-      const x0 = ((Math.max(g.start, a) - a) / (b - a)) * 1000, x1 = ((Math.min(g.end, b) - a) / (b - a)) * 1000;
-      const rect = s("rect", {
-        class: `seg series-${g.kind === "robot" ? 4 : 2}${g.seg_id === current ? " current" : ""}`,
-        x: x0, y: names.indexOf(laneOf(g)) * LANE + 3, width: Math.max(1, x1 - x0), height: LANE - 6,
-      }, s("title", null, `${g.seg_id} ${num(g.start, 2)}–${num(g.end, 2)} s\n${g.text || ""}${g.flags ? "\n" + g.flags : ""}`));
-      rect.addEventListener("click", () => { window.location.hash = "#/g/" + g.seg_id; });
-      svg.append(rect);
-    }
-    return [h("div", { class: "names", style: `grid-auto-rows: ${LANE}px` }, names.map((n) => h("span", { title: n }, n))), svg];
-  }
-
-  function axis(a, b) {
-    return h("div", { class: "axis" }, [a, (a + b) / 2, b].map((t) => h("span", null, num(t, 1) + " s")));
-  }
-
-  function plot(segments, levels, a, b, current, mark) {
-    const curve = levels ? energy(levels, a, b) : null;
-    return h("div", { class: "rh-plot" },
-      curve ? [h("div", { class: "names" }, h("span", null, "dB")), h("div", null, curve)] : null,
-      lanes(segments, a, b, current, mark),
-      axis(a, b));
-  }
-
-  // --- wav over HTTP Range ---------------------------------------------------
-
-  const headers = new Map(); // object path → header, kept for the page's life
-  const spans = new Map(); // `${which}|${a}|${b}` → {info, bytes}
-
-  function objectPath(url) {
-    return new URL(url).pathname;
-  }
-
   function linked(url) {
     return new URL(url, new URL(API + "/", location.href)).href;
   }
 
-  async function ranged(url, first, last) {
-    const abort = new AbortController();
-    const response = await fetch(url, { headers: { Range: `bytes=${first}-${last}` }, signal: abort.signal });
-    if (response.status !== 206) {
-      abort.abort(); // a 200 would be the whole file
-      throw new Error(response.status === 403 ? "expired" : "range " + response.status);
-    }
-    return response.arrayBuffer();
+  function select(label, options, value, onchange, disabled) {
+    const pick = h("select", { disabled }, options.map(([v, text]) => h("option", { value: v, selected: String(v) === String(value) }, text)));
+    pick.addEventListener("change", () => onchange(pick.value));
+    return h("label", { class: "field" }, h("span", null, label), pick);
   }
 
-  async function wavHeader(url) {
-    const key = objectPath(url);
-    if (headers.has(key)) return headers.get(key);
-    const view = new DataView(await ranged(url, 0, 65535));
-    const tag = (at) => String.fromCharCode(...new Uint8Array(view.buffer, at, 4));
-    if (tag(0) !== "RIFF" || tag(8) !== "WAVE") throw new Error("not a wav");
-    let at = 12, info = null;
-    while (at + 8 <= view.byteLength) {
-      const id = tag(at), size = view.getUint32(at + 4, true);
-      if (id === "fmt ") {
-        info = { format: view.getUint16(at + 8, true), channels: view.getUint16(at + 10, true),
-          rate: view.getUint32(at + 12, true), block: view.getUint16(at + 20, true), bits: view.getUint16(at + 22, true) };
-        if (info.format === 0xfffe) info.format = view.getUint16(at + 32, true);
-      } else if (id === "data") {
-        if (!info) break;
-        info.offset = at + 8;
-        info.frames = Math.floor(size / info.block);
-        headers.set(key, info);
-        return info;
-      }
-      at += 8 + size + (size % 2);
-    }
-    throw new Error("wav header not found");
+  // --- the session header --------------------------------------------------------
+
+  function sessionLabel(s) {
+    return `${s.session} · ${fixed(s.dur / 60, 1)} 分钟 · ${s.n_speakers} 人`;
   }
 
-  async function spanBytes(which, url, a, b) {
-    const key = `${which}|${a}|${b}`;
-    if (spans.has(key)) return spans.get(key);
-    const info = await wavHeader(url);
-    const first = Math.min(info.frames, Math.floor(a * info.rate));
-    const last = Math.min(info.frames, Math.ceil(b * info.rate));
-    if (last <= first) throw new Error("span outside the recording");
-    const bytes = await ranged(url, info.offset + first * info.block, info.offset + last * info.block - 1);
-    const found = { info, bytes };
-    spans.set(key, found);
-    if (spans.size > 12) spans.delete(spans.keys().next().value);
-    return found;
-  }
-
-  // The mean of `channels` (1-based) as float samples.
-  function mono({ info, bytes }, channels) {
-    const view = new DataView(bytes);
-    const frames = Math.floor(bytes.byteLength / info.block), out = new Float32Array(frames);
-    const width = info.bits / 8;
-    const read = info.format === 3 && info.bits === 32 ? (at) => view.getFloat32(at, true)
-      : info.bits === 16 ? (at) => view.getInt16(at, true) / 32768
-        : info.bits === 32 ? (at) => view.getInt32(at, true) / 2147483648 : null;
-    if (!read) throw new Error(`unsupported wav: format ${info.format}, ${info.bits} bit`);
-    const picked = channels.filter((c) => c >= 1 && c <= info.channels);
-    if (!picked.length) throw new Error(`the wav has ${info.channels} channels`);
-    for (let i = 0; i < frames; i++) {
-      let sum = 0;
-      for (const c of picked) sum += read(i * info.block + (c - 1) * width);
-      out[i] = sum / picked.length;
-    }
-    return out;
-  }
-
-  function wavBlob(samples, rate) {
-    const buffer = new ArrayBuffer(44 + samples.length * 2), view = new DataView(buffer);
-    const put = (at, str) => [...str].forEach((ch, i) => view.setUint8(at + i, ch.charCodeAt(0)));
-    put(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); put(8, "WAVE");
-    put(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-    view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-    put(36, "data"); view.setUint32(40, samples.length * 2, true);
-    samples.forEach((v, i) => view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 32767, true));
-    return new Blob([buffer], { type: "audio/wav" });
-  }
-
-  function drawWave(canvas, samples) {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(1, Math.round(canvas.clientWidth * ratio)), height = Math.max(1, Math.round(canvas.clientHeight * ratio));
-    canvas.width = width;
-    canvas.height = height;
-    const pen = canvas.getContext("2d");
-    pen.clearRect(0, 0, width, height);
-    pen.fillStyle = getComputedStyle(canvas).getPropertyValue("--color-series-2").trim() || "#2f6fde";
-    let peak = 1e-4;
-    for (const v of samples) peak = Math.max(peak, Math.abs(v));
-    const per = samples.length / width, mid = height / 2;
-    for (let x = 0; x < width; x++) {
-      let low = 0, high = 0;
-      const end = Math.min(samples.length, Math.floor((x + 1) * per));
-      for (let i = Math.floor(x * per); i < end; i++) {
-        if (samples[i] < low) low = samples[i];
-        if (samples[i] > high) high = samples[i];
-      }
-      pen.fillRect(x, mid - (high / peak) * mid, 1, Math.max(1, ((high - low) / peak) * mid));
-    }
-  }
-
-  // --- views -----------------------------------------------------------------
-
-  async function overview(mine) {
-    const o = await get("/overview");
-    if (mine !== generation) return;
-    const st = o.stats, ix = o.index;
-    const sessionHeads = [["会话"], ["时长 min", 1], ["说话人", 1], ["人声占比", 1], ["2+ 重叠 s", 1], ["机器人 s", 1], ["AEC"], ["坏通道"]];
-    show(
-      back(["#/", "概览", true]),
-      tiles([
-        ["会话", text(st.sessions && st.sessions.n)],
-        ["时长", num(st.sessions && st.sessions.hours, 1) + " h"],
-        ["人声片段", text(st.human_segments && st.human_segments.n)],
-        ["说话人", text(st.speakers && st.speakers.in_csv)],
-      ]),
-      h("p", { class: "hint" }, `索引 v${text(ix.version)} · 构建 ${text(ix.built_at)} · 代码 ${text(ix.code)} · 发布 ${text(ix.published_at)} · ${o.license}，仅限非商业使用，不得转发原始数据。`),
-      h("section", null, h("h2", null, "挖掘查询"), table([["查询"], ["说明"], ["片段", 1], ["会话", 1], ["分钟", 1]],
-        o.queries.map((q) => h("tr", null,
-          h("th", { scope: "row" }, h("a", { href: `#/q/${q.name}/0` }, q.name)), h("td", null, text(q.note)),
-          h("td", { class: "num" }, text(q.segments)), h("td", { class: "num" }, text(q.sessions)), h("td", { class: "num" }, num(q.minutes, 1)))))),
-      h("section", null, h("h2", null, "会话"), table(sessionHeads, o.sessions.map((x) => h("tr", null,
-        h("th", { scope: "row" }, h("a", { href: `#/s/${x.session}/0` }, x.session)),
-        h("td", { class: "num" }, num(x.dur / 60, 1)), h("td", { class: "num" }, text(x.n_speakers)),
-        h("td", { class: "num" }, pct(x.human_speech, x.dur)), h("td", { class: "num" }, num(x.overlap_2plus, 0)),
-        h("td", { class: "num" }, num(x.robot_speech, 0)), h("td", null, x.has_aec ? "有" : "—"), h("td", null, text(x.dead_channels)))))),
-      h("details", null, h("summary", null, "stats.json"), h("pre", null, JSON.stringify(st, null, 2))),
-    );
-  }
-
-  async function query(mine, name, offset) {
-    const limit = 50;
-    const q = await get(`/query/${encodeURIComponent(name)}?offset=${offset}&limit=${limit}`);
-    if (mine !== generation) return;
-    const pages = [];
-    if (offset > 0) pages.push(["#/q/" + name + "/" + Math.max(0, offset - limit), "上一页"]);
-    if (offset + limit < q.total) pages.push(["#/q/" + name + "/" + (offset + limit), "下一页"]);
-    show(
-      back(["#/", "概览"], [location.hash, name, true]),
-      h("p", { class: "hint" }, `${q.total} 个片段，第 ${q.total ? offset + 1 : 0}–${Math.min(q.total, offset + limit)} 个。顺序与 rh_preview 的 seed 0 相同：先每个会话一个。`),
-      table(SEG_HEAD.map(([, label]) => [label]), q.hits.map((g) => segRow(g))),
-      pages.length ? h("nav", { class: "segmented", "aria-label": "翻页" }, pages.map(([href, label]) => h("a", { href }, label))) : null,
-    );
-  }
-
-  const sessions = new Map(); // session → its JSON, for paging the window without asking again
-
-  async function session(mine, id, from) {
-    if (!sessions.has(id)) sessions.set(id, await get("/session/" + id));
-    const data = sessions.get(id), row = data.session;
-    const a = Math.max(0, Math.min(from, Math.max(0, row.dur - WINDOW_S))), b = Math.min(row.dur, a + WINDOW_S);
-    const levels = await get(`/frames/${id}?from=${a}&to=${b}&points=1000`).catch(() => null);
-    if (mine !== generation) return;
-    const go = (t) => { window.location.hash = `#/s/${id}/${Math.round(Math.max(0, t))}`; };
-    const jump = h("input", { type: "number", min: 0, max: Math.floor(row.dur), step: 5, value: Math.round(a) });
-    jump.addEventListener("change", () => go(Number(jump.value) || 0));
-    show(
-      back(["#/", "概览"], [location.hash, id, true]),
-      tiles([
-        ["时长", num(row.dur / 60, 1) + " min"],
-        ["说话人", text(row.speakers || row.n_speakers)],
-        ["人声占比", pct(row.human_speech, row.dur)],
-        ["2+ 重叠", num(row.overlap_2plus, 0) + " s"],
-        ["机器人", num(row.robot_speech, 0) + " s"],
-      ]),
-      h("div", { class: "rh-toolbar" },
-        h("button", { type: "button", class: "button secondary compact", onclick: () => go(a - WINDOW_S), disabled: a <= 0 }, "← 前 60 s"),
-        h("label", null, "从 s", jump),
-        h("button", { type: "button", class: "button secondary compact", onclick: () => go(a + WINDOW_S), disabled: b >= row.dur }, "后 60 s →")),
-      plot(data.segments, levels, a, b),
-      table(SEG_HEAD.map(([, label]) => [label]),
-        data.segments.filter((g) => g.end > a && g.start < b).map((g) => segRow({ ...g, dur: g.end - g.start }))),
-      h("details", null, h("summary", null, "会话字段"), kv(Object.entries(row))),
-    );
-  }
-
-  let pad = 1;
-  let mic = 1;
-
-  async function segment(mine, segId) {
-    let data = await get(`/segment/${segId}?pad=${pad}`);
-    const levels = await get(`/frames/${data.segment.session}?from=${data.span[0]}&to=${data.span[1]}&points=1000`).catch(() => null);
-    if (mine !== generation) return;
-    const g = data.segment, [a, b] = data.span;
-    const refresh = async () => { data = await get(`/segment/${segId}?pad=${pad}`); };
-
-    const audio = h("audio", { controls: true, preload: "none" });
-    const canvas = h("canvas", { "aria-hidden": "true" });
-    const head = h("div", { class: "playhead", hidden: true });
-    const wave = h("div", { class: "rh-wave", title: "点击跳到这里" }, canvas, head);
-    const status = h("p", { class: "hint", role: "status" });
-    const sources = [
-      ["raw", () => [mic], () => `阵列 mic ${mic}`],
-      ["mean", () => [1, 2, 3, 4, 5, 6], () => "6 麦平均"],
-      ["aec", () => [mic], () => `AEC mic ${mic}`],
-      ["ref", () => [7], () => "回声参考 ch7"],
+  function header(row, speakers) {
+    const figures = [
+      ["时长", fixed(row.dur / 60, 1) && fixed(row.dur / 60, 1) + " 分钟"],
+      ["说话人", row.n_speakers],
+      ["人声占比", row.dur ? Math.round((100 * row.human_speech) / row.dur) + "%" : null],
+      ["机器人语音", fixed(row.robot_speech, 0) && fixed(row.robot_speech, 0) + " s"],
+      ["2 人以上重叠", fixed(row.overlap_2plus, 0) && fixed(row.overlap_2plus, 0) + " s"],
+      ["唤醒词", row.n_wake],
+    ].filter(([, v]) => v !== null && v !== undefined && !Number.isNaN(v));
+    const who = speakers.map((s) => h("li", null, h("b", null, s.speaker), " · " + [
+      s.gender, fixed(s.age, 0), s.origin, `${s.turns} 轮，${fixed(s.speech, 0)} s`,
+    ].filter((x) => x !== null && x !== undefined && x !== "").join(" · ")));
+    const levels = [1, 2, 3, 4, 5, 6, 7, 8].filter((c) => fixed(row[`raw_ch${c}_db`], 0) !== null)
+      .map((c) => `${c} ${fixed(row[`raw_ch${c}_db`], 0)}`);
+    const recording = [
+      row.raw_channels !== undefined ? `阵列 ${row.raw_channels} 路，AEC ${row.aec_channels ?? "—"} 路（${row.has_aec ? "有" : "缺"}）` : null,
+      fixed(row.floor_db, 0) !== null ? `底噪 ${fixed(row.floor_db, 0)} dB（AEC ${fixed(row.aec_floor_db, 0) ?? "—"} dB）` : null,
+      row.dead_channels !== undefined ? `坏通道 ${row.dead_channels || "无"}` : null,
+      fixed(row.raw_clip_max, 2) !== null ? `峰值 ${fixed(row.raw_clip_max, 2)}` : null,
+      levels.length ? "各通道电平 dB：" + levels.join(" · ") : null,
+    ].filter(Boolean);
+    return [
+      h("div", { class: "tiles" }, figures.map(([label, figure]) =>
+        h("div", { class: "tile" }, h("p", { class: "label" }, label), h("p", { class: "figure" }, String(figure))))),
+      who.length ? h("ul", { class: "rh-speakers" }, who) : null,
+      recording.length ? h("details", { class: "rh-recording" }, h("summary", null, "录音"), h("p", null, recording.join(" · "))) : null,
     ];
-    let source = "raw", samples = null;
-    const buttons = h("nav", { class: "segmented", "aria-label": "声源" });
+  }
 
-    const label = () => {
-      buttons.replaceChildren(...sources.map(([key, , name]) => h("button", {
-        type: "button", "aria-pressed": String(key === source), disabled: key === "aec" && !data.media.aec,
-        onclick: () => { source = key; load(); },
-      }, name())));
-    };
+  // --- the player -------------------------------------------------------------------
 
-    async function load(retried = false) {
-      label();
-      const [, channels, name] = sources.find(([key]) => key === source);
-      const which = source === "aec" ? "aec" : "audio";
-      if (!data.media[which]) {
-        status.textContent = "这个会话没有发布这段音频。";
-        return;
-      }
-      status.textContent = "读取中…";
-      try {
-        const span = await spanBytes(which, linked(data.media[which]), a, b);
-        samples = mono(span, channels());
-        const was = audio.src;
-        audio.src = URL.createObjectURL(wavBlob(samples, span.info.rate));
-        if (was) URL.revokeObjectURL(was);
-        drawWave(canvas, samples);
-        status.textContent = `${name()} · ${num(b - a, 2)} s · ${span.info.channels} 通道 ${span.info.rate} Hz`;
-      } catch (error) {
-        if (error.message === "expired" && !retried) {
-          await refresh();
-          return load(true);
-        }
-        status.textContent = "读不到音频：" + error.message;
-      }
+  function signalKey(sig, mic) {
+    return sig === "mic" || sig === "aec" ? sig + mic : sig;
+  }
+
+  function player(mine, sid, data) {
+    if (active) active.stop();
+    const ids = sessions.sessions.map((s) => s.session);
+    const at = ids.indexOf(sid);
+    const go = (id) => { if (id) location.hash = "#/s/" + id; };
+    const L = data.listen;
+    const signals = data.signals;
+    const cams = Object.keys(data.video);
+    const offered = SIGNALS.filter(([sig]) => (sig === "mic" || sig === "aec"
+      ? MICS.some((c) => signals[sig + c]) : signals[sig]));
+    if (!offered.some(([sig]) => sig === prefs.sig) && offered.length) prefs.sig = offered[0][0];
+    if (!signals[signalKey(prefs.sig, prefs.mic)]) {
+      prefs.mic = MICS.find((c) => signals[signalKey(prefs.sig, c)]) || prefs.mic;
+    }
+    const cam = cams.includes(prefs.cam) ? prefs.cam : cams[0];
+
+    const picker = h("div", { class: "rh-session" },
+      select("会话", sessions.sessions.map((s) => [s.session, sessionLabel(s)]), sid, go),
+      h("button", { type: "button", class: "button secondary", disabled: at <= 0, title: "上一个", "aria-label": "上一个会话", onclick: () => go(ids[at - 1]) }, "‹"),
+      h("button", { type: "button", class: "button secondary", disabled: at >= ids.length - 1, title: "下一个", "aria-label": "下一个会话", onclick: () => go(ids[at + 1]) }, "›"));
+    const top = [h("div", { class: "rh-toolbar" }, picker), ...header(data.session, data.speakers)];
+    if (!offered.length) {
+      root.replaceChildren(...top, h("p", { class: "hint" }, "这个会话还没有试听文件。"));
+      active = null;
+      return;
     }
 
-    // Video: muted, seeked to the span, following the audio.
-    const cams = Object.keys(data.media.video || {});
-    let video = null, camPick = null;
-    if (cams.length) {
-      video = h("video", { muted: true, playsinline: true, preload: "metadata" });
-      video.muted = true;
-      const setCam = (cam) => {
-        video.src = linked(data.media.video[cam]);
-        video.addEventListener("loadedmetadata", () => { video.currentTime = a + (audio.currentTime || 0); }, { once: true });
-      };
-      camPick = h("select", null, cams.map((c) => h("option", { value: c }, c)));
-      camPick.addEventListener("change", () => setCam(camPick.value));
-      setCam(cams[0]);
-      const follow = () => { if (Math.abs(video.currentTime - (a + audio.currentTime)) > 0.15) video.currentTime = a + audio.currentTime; };
-      audio.addEventListener("play", () => { follow(); video.play().catch(() => {}); });
-      audio.addEventListener("pause", () => video.pause());
-      audio.addEventListener("seeked", follow);
-      video.addEventListener("error", async () => {
-        await refresh();
-        if (data.media.video[camPick.value]) setCam(camPick.value);
+    // segments, lanes and the transcript
+    const segs = data.segments.map((g) => ({ s: g.start, e: g.end, k: g.kind, w: g.kind === "robot" || !g.speaker ? ROBOT : g.speaker, x: g.text || "" }));
+    const lanes = [...new Set(segs.map((g) => g.w))].sort((a, b) => (a === ROBOT) - (b === ROBOT) || a.localeCompare(b));
+    segs.forEach((g) => { g.l = lanes.indexOf(g.w); });
+    let dur = Math.max(data.session.dur || 0, ...segs.map((g) => g.e));
+
+    const audio = h("audio", { preload: "auto" });
+    const video = cams.length ? h("video", { muted: true, playsinline: true, preload: "auto" }) : null;
+    if (video) video.muted = true;
+    const sheet = new Image();
+    const tx = h("div", { class: "rh-tx" }, segs.map((g) =>
+      h("div", { class: "rh-line " + g.k, onclick: () => seek(g.s) },
+        h("span", { class: "t" }, fmt(g.s)), h("span", { class: "who" }, g.w), h("span", null, g.x || "—"))));
+    const rows = [...tx.children];
+    const ov = h("canvas", { class: "rh-ov", "aria-label": "整段" });
+    const det = h("canvas", { class: "rh-det", "aria-label": "当前窗口" });
+    const play = h("button", { type: "button", class: "button", title: "空格", onclick: () => toggle() }, "▶ 播放");
+    const clock = h("span", { class: "rh-clock" }, "0:00 / " + fmt(dur));
+    const note = h("span", { class: "hint rh-note" });
+
+    // where the position, the signal and the camera come from
+    let pending = null; // a position to restore once the new source has its metadata
+    let restarts = 0;
+    const saved = stored("sessionStorage", POSITION);
+    if (saved && saved.sid === sid) pending = saved.t;
+
+    function setSignal() {
+      const key = signalKey(prefs.sig, prefs.mic);
+      const s = signals[key];
+      if (pending === null && audio.currentSrc) pending = audio.currentTime;
+      const playing = !audio.paused;
+      audio.src = linked(s.mp3);
+      audio.defaultPlaybackRate = audio.playbackRate = prefs.rate;
+      audio.addEventListener("loadedmetadata", () => {
+        if (pending !== null) audio.currentTime = Math.min(pending, audio.duration || pending);
+        pending = null;
+        dur = Math.max(dur, audio.duration || 0);
+        if (playing) audio.play().catch(() => {});
+      }, { once: true });
+      sheet.src = linked(s.jpg);
+      const shift = L.aec_shift_s;
+      note.textContent = prefs.sig === "aec" && shift ? `AEC 晚读 ${Math.round(shift * 1000)} ms，与标注对齐` : "";
+    }
+
+    function setCamera(name) {
+      if (!video) return;
+      video.src = linked(data.video[name]);
+      video.playbackRate = prefs.rate;
+      video.addEventListener("loadedmetadata", () => {
+        video.currentTime = audio.currentTime;
+        if (!audio.paused) video.play().catch(() => {});
       }, { once: true });
     }
 
-    const tick = () => {
-      if (!audio.duration) return;
-      head.hidden = false;
-      head.style.left = (100 * audio.currentTime) / audio.duration + "%";
-      if (!audio.paused) requestAnimationFrame(tick);
-    };
-    audio.addEventListener("play", tick);
-    audio.addEventListener("seeked", tick);
-    wave.addEventListener("click", (event) => {
-      if (!audio.duration) return;
-      const box = wave.getBoundingClientRect();
-      audio.currentTime = ((event.clientX - box.left) / box.width) * audio.duration;
+    // Links expire: fetch them again once, then put the source back where it was.
+    async function refresh(then) {
+      if (restarts++ > 3) return failed(new Error("媒体链接失效"));
+      const fresh = await get("/session/" + sid);
+      if (mine !== generation) return;
+      Object.assign(signals, fresh.signals);
+      Object.assign(data.video, fresh.video);
+      then();
+    }
+    const onError = (then) => () => { if (mine === generation) refresh(then).catch(failed); };
+    audio.addEventListener("error", () => { pending = audio.currentTime || pending; });
+    audio.addEventListener("error", onError(setSignal));
+    sheet.addEventListener("error", onError(() => { sheet.src = linked(signals[signalKey(prefs.sig, prefs.mic)].jpg); }));
+    if (video) video.addEventListener("error", onError(() => setCamera(camPick.value)));
+    audio.addEventListener("playing", () => { restarts = 0; });
+
+    const savePrefs = () => keep("localStorage", PREFS, prefs);
+    const sigPick = select("信号", offered.map(([v, label]) => [v, label]), prefs.sig, (v) => {
+      prefs.sig = v;
+      if (!signals[signalKey(v, prefs.mic)]) prefs.mic = MICS.find((c) => signals[signalKey(v, c)]) || prefs.mic;
+      micPick.querySelector("select").disabled = !(v === "mic" || v === "aec");
+      micPick.querySelector("select").value = String(prefs.mic);
+      savePrefs();
+      setSignal();
+    });
+    const micPick = select("麦克风", MICS.map((c) => [c, String(c)]), prefs.mic, (v) => {
+      if (!signals[signalKey(prefs.sig, v)]) return;
+      prefs.mic = Number(v);
+      savePrefs();
+      setSignal();
+    }, !(prefs.sig === "mic" || prefs.sig === "aec"));
+    const camField = cams.length ? select("相机", cams.map((c) => [c, c]), cam, (v) => { prefs.cam = v; savePrefs(); setCamera(v); }) : null;
+    const camPick = camField ? camField.querySelector("select") : null;
+    const ratePick = select("速度", RATES.map((r) => [r, r + "×"]), prefs.rate, (v) => {
+      prefs.rate = Number(v);
+      audio.playbackRate = audio.defaultPlaybackRate = prefs.rate;
+      if (video) video.playbackRate = prefs.rate;
+      savePrefs();
+    });
+    const winPick = select("窗口", WINDOWS.map((w) => [w, w + " s"]), prefs.win, (v) => { prefs.win = Number(v); savePrefs(); });
+    top[0].append(sigPick, micPick, camField || "", note);
+
+    root.replaceChildren(...top, h("div", { class: "rh-player" },
+      h("div", { class: "rh-top" + (video ? "" : " novideo") }, video ? h("div", { class: "rh-video" }, video) : null, tx),
+      h("div", { class: "rh-bar" }, play, clock, ratePick, winPick),
+      ov, det, audio));
+
+    // --- drawing ---------------------------------------------------------------------
+
+    let dpr = 1, W = 0, ovImg = null, colours = null, theme = "";
+
+    function palette() {
+      const style = getComputedStyle(main);
+      const v = (k) => style.getPropertyValue(k).trim();
+      return {
+        surface: v("--color-surface"), contrast: v("--color-contrast"), muted: v("--color-muted"),
+        border: v("--color-border"), head: v("--color-accent-marker"), human: v("--rh-human"),
+        robot: v("--rh-robot"), on: v("--rh-on-series"), font: v("--font-sans"),
+      };
+    }
+
+    function size() {
+      dpr = window.devicePixelRatio || 1;
+      W = det.clientWidth;
+      ov.style.height = OV_SPEC + lanes.length * OV_LANE + 2 + "px";
+      det.style.height = DET_SPEC + AXIS + lanes.length * LANE + "px";
+      for (const c of [ov, det]) {
+        c.width = Math.round(c.clientWidth * dpr);
+        c.height = Math.round(c.clientHeight * dpr);
+      }
+      drawOverview();
+    }
+
+    function drawSpec(g, t0, t1, x, y, w, ht) {
+      if (!sheet.complete || !sheet.naturalWidth || !L.rows || !L.tile) return;
+      const per = 1 / L.hop_s, c0 = t0 * per, c1 = t1 * per;
+      const tiles = Math.round(sheet.naturalHeight / L.rows);
+      g.imageSmoothingQuality = "high";
+      for (let k = 0; k < tiles; k++) {
+        const a0 = k * L.tile, s0 = Math.max(c0, a0), s1 = Math.min(c1, a0 + L.tile);
+        if (s1 <= s0) continue;
+        g.drawImage(sheet, s0 - a0, k * L.rows, s1 - s0, L.rows,
+          x + ((s0 - c0) / (c1 - c0)) * w, y, ((s1 - s0) / (c1 - c0)) * w, ht);
+      }
+    }
+
+    function drawOverview() {
+      if (!W) return;
+      colours = palette();
+      theme = JSON.stringify(colours);
+      const c = document.createElement("canvas");
+      c.width = ov.width;
+      c.height = ov.height;
+      const g = c.getContext("2d");
+      g.scale(dpr, dpr);
+      g.fillStyle = colours.surface;
+      g.fillRect(0, 0, W, ov.clientHeight);
+      drawSpec(g, 0, dur, 0, 0, W, OV_SPEC);
+      for (const s of segs) {
+        g.fillStyle = s.k === "robot" ? colours.robot : colours.human;
+        g.fillRect((s.s / dur) * W, OV_SPEC + 2 + s.l * OV_LANE, Math.max(1, ((s.e - s.s) / dur) * W), OV_LANE - 1);
+      }
+      ovImg = c;
+    }
+
+    // the playhead sits a third of the way in, so what is coming is on screen
+    function view(t) {
+      const t0 = Math.min(Math.max(0, t - prefs.win / 3), Math.max(0, dur - prefs.win));
+      return [t0, t0 + prefs.win];
+    }
+
+    let lastOn = -1, lastSync = 0, lastSave = 0;
+    function frame() {
+      if (mine !== generation) return;
+      const now = palette();
+      if (JSON.stringify(now) !== theme) drawOverview();
+      const C = colours || now;
+      const t = audio.currentTime;
+      const [t0, t1] = view(t);
+
+      const o = ov.getContext("2d");
+      o.setTransform(1, 0, 0, 1, 0, 0);
+      o.clearRect(0, 0, ov.width, ov.height);
+      if (ovImg) o.drawImage(ovImg, 0, 0);
+      o.scale(dpr, dpr);
+      o.strokeStyle = C.contrast;
+      o.lineWidth = 1;
+      o.strokeRect((t0 / dur) * W + 0.5, 0.5, Math.max(2, ((t1 - t0) / dur) * W), ov.clientHeight - 1);
+      o.fillStyle = C.head;
+      o.fillRect((t / dur) * W - 1, 0, 2, ov.clientHeight);
+
+      const g = det.getContext("2d");
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const H = det.clientHeight;
+      g.fillStyle = C.surface;
+      g.fillRect(0, 0, W, H);
+      drawSpec(g, t0, t1, 0, 0, W, DET_SPEC);
+      const X = (s) => ((s - t0) / (t1 - t0)) * W;
+      g.fillStyle = C.muted;
+      g.font = `11px ${C.font}`;
+      g.textBaseline = "middle";
+      const step = prefs.win <= 10 ? 1 : prefs.win <= 30 ? 5 : 10;
+      for (let s = Math.ceil(t0 / step) * step; s <= t1; s += step) {
+        g.fillRect(X(s), DET_SPEC, 1, 4);
+        g.fillText(fmt(s), X(s) + 3, DET_SPEC + AXIS / 2 + 1);
+      }
+      g.fillStyle = C.border;
+      lanes.forEach((_, i) => g.fillRect(0, DET_SPEC + AXIS + i * LANE, W, 1));
+      for (const s of segs) {
+        if (s.e < t0 || s.s > t1) continue;
+        const x0 = Math.max(0, X(s.s)), x1 = Math.min(W, X(s.e)), y = DET_SPEC + AXIS + s.l * LANE;
+        g.fillStyle = s.k === "robot" ? C.robot : C.human;
+        g.globalAlpha = t >= s.s && t < s.e ? 1 : 0.7;
+        g.fillRect(x0, y + 2, Math.max(1, x1 - x0), LANE - 4);
+        g.globalAlpha = 1;
+        g.save();
+        g.beginPath();
+        g.rect(x0, y, x1 - x0, LANE);
+        g.clip();
+        g.fillStyle = C.on;
+        g.fillText(s.x, x0 + 4, y + LANE / 2);
+        g.restore();
+      }
+      lanes.forEach((name, i) => { // lane names last, over the bars
+        const y = DET_SPEC + AXIS + i * LANE;
+        g.fillStyle = C.surface;
+        g.globalAlpha = 0.85;
+        g.fillRect(0, y + 2, g.measureText(name).width + 8, LANE - 4);
+        g.globalAlpha = 1;
+        g.fillStyle = C.contrast;
+        g.fillText(name, 4, y + LANE / 2);
+      });
+      g.fillStyle = C.head;
+      g.fillRect(X(t) - 1, 0, 2, H);
+
+      clock.textContent = `${fmt(t)} / ${fmt(dur)}`;
+      follow(t);
+      requestAnimationFrame(frame);
+    }
+
+    function follow(t) {
+      let on = -1;
+      for (let i = 0; i < segs.length; i++) if (segs[i].s <= t && t < segs[i].e) on = i;
+      if (on < 0) for (let i = 0; i < segs.length; i++) if (segs[i].s <= t) on = i;
+      if (on !== lastOn) {
+        if (lastOn >= 0) rows[lastOn].classList.remove("on");
+        if (on >= 0) {
+          rows[on].classList.add("on");
+          tx.scrollTop = rows[on].offsetTop - tx.clientHeight / 3;
+        }
+        lastOn = on;
+      }
+      const now = performance.now();
+      if (video && video.readyState > 0 && now - lastSync > 400) {
+        lastSync = now;
+        if (Math.abs(video.currentTime - t) > 0.3) video.currentTime = t;
+      }
+      if (now - lastSave > 1000 && pending === null) {
+        lastSave = now;
+        keep("sessionStorage", POSITION, { sid, t });
+      }
+    }
+
+    function seek(t) {
+      audio.currentTime = Math.min(Math.max(0, t), dur);
+      if (video && video.readyState > 0) video.currentTime = audio.currentTime;
+    }
+
+    function toggle() {
+      if (audio.paused) audio.play().catch(() => {});
+      else audio.pause();
+    }
+
+    audio.addEventListener("play", () => { play.textContent = "❚❚ 暂停"; if (video) video.play().catch(() => {}); });
+    audio.addEventListener("pause", () => { play.textContent = "▶ 播放"; if (video) video.pause(); });
+    audio.addEventListener("seeked", () => { if (video && video.readyState > 0) video.currentTime = audio.currentTime; });
+    sheet.addEventListener("load", drawOverview);
+    ov.addEventListener("click", (e) => seek((e.offsetX / ov.clientWidth) * dur));
+    det.addEventListener("click", (e) => {
+      const [t0, t1] = view(audio.currentTime);
+      seek(t0 + (e.offsetX / det.clientWidth) * (t1 - t0));
     });
 
-    const padPick = h("select", null, PADS.map((p) => h("option", { value: p, selected: p === pad }, p + " s")));
-    padPick.addEventListener("change", () => { pad = Number(padPick.value); route(); });
-    const micPick = h("select", null, [1, 2, 3, 4, 5, 6].map((c) => h("option", { value: c, selected: c === mic }, "mic " + c)));
-    micPick.addEventListener("change", () => { mic = Number(micPick.value); load(); });
-
-    const fields = Object.entries(g).filter(([k]) => !["seg_id", "text", "session"].includes(k));
-    show(
-      back(["#/", "概览"], [`#/s/${g.session}/${Math.max(0, Math.floor(a / WINDOW_S) * WINDOW_S)}`, g.session], [location.hash, g.seg_id, true]),
-      h("p", { class: "hint" }, `${g.speaker || "robot"} · ${num(g.start, 2)}–${num(g.end, 2)} s（${num(g.dur, 2)} s）${g.flags ? " · " + g.flags : ""}`),
-      h("p", { class: "rh-text" }, text(g.text)),
-      data.nearby.length ? h("p", { class: "rh-near" }, "同一段里还有：" + data.nearby
-        .map((n) => `${n.speaker || "robot"} ${num(n.start, 1)}–${num(n.end, 1)}：${n.text || ""}`).join(" | ")) : null,
-      h("div", { class: "rh-toolbar" }, h("label", null, "前后", padPick), h("label", null, "通道", micPick),
-        camPick ? h("label", null, "相机", camPick) : null),
-      plot([g, ...data.nearby], levels, a, b, g.seg_id, [g.start, g.end]),
-      buttons,
-      h("div", { class: "rh-media" + (video ? " with-video" : "") }, h("div", null, wave, audio, status), video),
-      h("details", null, h("summary", null, "字段"), kv(fields)),
-    );
-    load();
+    active = {
+      toggle,
+      seek: (by) => seek(audio.currentTime + by),
+      size,
+      stop() {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        if (video) {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+        }
+      },
+    };
+    setSignal();
+    if (cam) setCamera(cam);
+    size();
+    requestAnimationFrame(frame);
   }
 
-  // --- routing ---------------------------------------------------------------
+  // --- routing ---------------------------------------------------------------------
 
-  function route() {
+  async function route() {
     const mine = ++generation;
-    const parts = window.location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
-    const work = parts[0] === "q" && parts[1] ? query(mine, parts[1], Math.max(0, parseInt(parts[2], 10) || 0))
-      : parts[0] === "s" && parts[1] ? session(mine, parts[1], Math.max(0, parseInt(parts[2], 10) || 0))
-        : parts[0] === "g" && parts[1] ? segment(mine, parts[1])
-          : overview(mine);
-    work.catch((error) => { if (mine === generation) failed(error); });
-    window.scrollTo(0, 0);
+    try {
+      if (!sessions) sessions = await get("/sessions");
+      const ids = sessions.sessions.map((s) => s.session);
+      if (!ids.length) throw new Error("这个版本没有会话");
+      const asked = (location.hash.match(/^#\/s\/(S[0-9]{3,4})$/) || [])[1];
+      const last = stored("sessionStorage", POSITION);
+      const sid = ids.includes(asked) ? asked : last && ids.includes(last.sid) ? last.sid : ids[0];
+      if (asked !== sid) history.replaceState(null, "", "#/s/" + sid);
+      const data = await get("/session/" + sid);
+      if (mine === generation) player(mine, sid, data);
+    } catch (error) {
+      if (mine === generation) failed(error);
+    }
   }
 
+  document.addEventListener("keydown", (e) => {
+    if (!active || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (["SELECT", "INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+    if (e.code === "Space" && ["BUTTON", "SUMMARY", "A"].includes(e.target.tagName)) return;
+    if (e.code === "Space") {
+      e.preventDefault();
+      active.toggle();
+    } else if (e.code === "ArrowLeft") active.seek(-5);
+    else if (e.code === "ArrowRight") active.seek(5);
+  });
+  window.addEventListener("resize", () => { if (active) active.size(); });
   window.addEventListener("hashchange", route);
   route();
 })();

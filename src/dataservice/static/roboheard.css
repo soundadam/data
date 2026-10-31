@@ -1,126 +1,200 @@
-/* The RoboHEARD viewer: energy curve, speaker lanes, waveform, video. */
+/* The RoboHEARD whole-session player. Colours are the console's tokens; only
+ * the magma spectrogram (in the published sheets) is the player's own. */
+main.console {
+	--rh-human: var(--color-series-2);
+	--rh-robot: var(--color-series-4);
+	--rh-on-series: #fff;
+	--rh-vh: 380px;
+}
+
+:root[data-theme="dark"] main.console {
+	--rh-on-series: var(--color-base);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root[data-theme="auto"] main.console {
+		--rh-on-series: var(--color-base);
+	}
+}
+
 .rh-toolbar {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: end;
-	gap: var(--space-10);
-	margin: var(--space-10) 0;
+	gap: var(--space-20) var(--space-30);
+	margin: 0 0 var(--space-30);
 }
 
-.rh-toolbar label {
-	display: grid;
-	gap: 0.25rem;
-	font-size: var(--text-2xs);
-	color: var(--color-muted);
+.rh-toolbar .field select {
+	width: auto;
 }
 
-.rh-plot {
-	display: grid;
-	grid-template-columns: 6.5rem minmax(0, 1fr);
-	column-gap: var(--space-10);
-	margin: var(--space-10) 0;
-}
-
-.rh-plot .names {
-	display: grid;
-	font-size: var(--text-2xs);
-	color: var(--color-muted);
-}
-
-.rh-plot .names span {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	line-height: 18px;
-}
-
-.rh-plot svg {
-	display: block;
-	width: 100%;
-	overflow: visible;
-}
-
-.rh-plot .axis {
-	grid-column: 2;
-}
-
-.rh-energy path {
-	fill: none;
-	stroke: var(--series);
-	stroke-width: 1.2;
-	vector-effect: non-scaling-stroke;
-}
-
-.rh-lanes rect.seg {
-	fill: var(--series);
-	cursor: pointer;
-}
-
-.rh-lanes rect.seg:hover,
-.rh-lanes rect.seg.current {
-	opacity: 0.7;
-}
-
-.rh-lanes line {
-	stroke: var(--color-border);
-	vector-effect: non-scaling-stroke;
-}
-
-rect.rh-mark {
-	fill: var(--color-accent-soft);
-	opacity: 0.6;
-}
-
-.rh-wave {
-	position: relative;
-	height: 96px;
-	border: 1px solid var(--color-border);
-	border-radius: 4px;
-	cursor: pointer;
-}
-
-.rh-wave canvas {
-	width: 100%;
-	height: 100%;
-	display: block;
-}
-
-.rh-wave .playhead {
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	width: 1px;
-	background: var(--color-contrast);
-	pointer-events: none;
-}
-
-.rh-media {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
+.rh-session {
+	display: flex;
+	align-items: end;
 	gap: var(--space-10);
 }
 
-@media (min-width: 60rem) {
-	.rh-media.with-video {
-		grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-	}
+.rh-session .button {
+	width: auto;
+	padding: 0 var(--space-30);
 }
 
-.rh-media audio,
-.rh-media video {
-	width: 100%;
+.rh-note {
+	margin: 0;
+	align-self: center;
 }
 
-.rh-text {
-	font-size: var(--text-md);
-	margin: var(--space-10) 0;
+.rh-speakers {
+	list-style: none;
+	padding: 0;
+	margin: var(--space-20) 0 0;
+	color: var(--color-muted);
+	font-size: var(--text-xs);
 }
 
-.rh-near {
+.rh-speakers b {
+	color: var(--rh-human);
+}
+
+.rh-recording {
+	margin-top: var(--space-20);
 	font-size: var(--text-xs);
 	color: var(--color-muted);
 }
 
-td.rh-long {
-	min-width: 18rem;
+.rh-recording summary {
+	cursor: pointer;
+}
+
+.rh-recording p {
+	margin: var(--space-10) 0 0;
+}
+
+.rh-top {
+	display: grid;
+	grid-template-columns: minmax(0, 46%) minmax(0, 1fr);
+	gap: var(--space-20);
+	margin-top: var(--space-30);
+}
+
+.rh-top.novideo {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.rh-video {
+	background: var(--color-panel);
+	border-radius: var(--radius-md);
+	overflow: hidden;
+	height: var(--rh-vh);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.rh-video video {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	display: block;
+}
+
+.rh-tx {
+	position: relative;
+	height: var(--rh-vh);
+	overflow-y: auto;
+	background: var(--color-surface);
+	border: var(--border-hairline);
+	border-radius: var(--radius-md);
+	padding: 4px 0;
+	font-size: var(--text-xs);
+	line-height: var(--leading-snug);
+}
+
+.rh-line {
+	display: grid;
+	grid-template-columns: 44px 52px minmax(0, 1fr);
+	gap: var(--space-20);
+	padding: 4px 12px 4px 9px;
+	cursor: pointer;
+	border-left: 3px solid transparent;
+}
+
+.rh-line:hover,
+.rh-line.on {
+	background: var(--color-accent-surface);
+}
+
+.rh-line.on {
+	border-left-color: var(--color-accent-marker);
+}
+
+.rh-line .t,
+.rh-clock {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+.rh-line .t {
+	color: var(--color-muted);
+}
+
+.rh-line .who {
+	font-weight: var(--weight-strong);
+	color: var(--rh-human);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.rh-line.robot .who {
+	color: var(--rh-robot);
+}
+
+.rh-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: var(--space-20) var(--space-30);
+	margin: var(--space-20) 0;
+}
+
+.rh-bar > .button {
+	width: auto;
+	min-width: 6.5rem;
+}
+
+.rh-bar .field select {
+	width: auto;
+}
+
+.rh-clock {
+	align-self: center;
+	min-width: 7rem;
+	font-size: var(--text-xs);
+}
+
+.rh-player canvas {
+	display: block;
+	width: 100%;
+	cursor: pointer;
+	border-radius: var(--radius-sm);
+}
+
+.rh-ov {
+	margin-bottom: var(--space-10);
+}
+
+@media (max-width: 47.99rem) {
+	.rh-top {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.rh-video {
+		height: auto;
+		aspect-ratio: 16 / 13;
+	}
+
+	.rh-tx {
+		height: 16rem;
+	}
 }

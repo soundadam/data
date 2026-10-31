@@ -41,26 +41,20 @@ curl -H "Authorization: Bearer $KEY" "https://data.api.soundadam.com/v1/robohear
 
 The release is written by `rh data publish` in roboheard-train:
 
-- `index.json`, `stats.json`, `queries.json`;
-- `sessions`, `segments`, `speakers` and `mining.parquet`;
-- `frames/<S>.parquet`;
+- `index.json`, with `listen`: the signals, the spectrogram's hop, tile and
+  rows, and each session's AEC shift;
+- `sessions` and `segments.parquet`;
+- `listen/<S>/<signal>.mp3` and `.jpg` for `mic1`…`mic6`, `mean`, `ref` and
+  `aec1`…`aec6`: each signal encoded once, and its spectrogram as one sheet of
+  tiles stacked top to bottom;
 - `Audio/`, `Audio_AEC/` and `Video/`.
 
-The viewer ([`static/roboheard.js`](src/dataservice/static/roboheard.js))
-replaces rh_preview's three views:
-
-- stats and the mining queries;
-- one query's hits, in the order rh_preview draws with seed 0;
-- one session's timeline: energy curve and speaker lanes, 60 s at a time.
-
-Each view leads to a segment, which has:
-
-- a context span;
-- a choice of array mic, the 6-mic mean, AEC mic, or echo reference ch7;
-- video from any published camera, muted and following the audio.
-
-The browser reads the wav header and then only the span's bytes, using
-HTTP Range on the signed link.
+The viewer ([`static/roboheard.js`](src/dataservice/static/roboheard.js)) is
+rh_preview's whole-session player. One session's video, the chosen signal,
+its spectrogram, the speaker lanes and the transcript share one clock. The
+audio is the clock, and the video is the published mp4, muted and following it.
+Nothing is encoded at request time: the page plays the published files over
+HTTP Range on signed links and fetches them again when a link expires.
 
 ## Environment
 
