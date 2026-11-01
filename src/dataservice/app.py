@@ -11,7 +11,7 @@
 
 Every answer is filtered by the competitions members grants the asker
 (access.Grants). Audio, video and downloads stream through here from the
-origin on g18, under `<api base>/raw/<file>` with a signed expiry
+origin (SeaweedFS on elon), under `<api base>/raw/<file>` with a signed expiry
 (store.Links) that stands in for the cookie or key. Neither keys nor links
 are logged.
 """
@@ -171,7 +171,7 @@ class Base(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        except Exception as error:  # noqa: BLE001 - the origin or the tunnel
+        except Exception as error:  # noqa: BLE001 - the origin
             self.log_message("%s raw failed: %s", competition_id, type(error).__name__)
             self.answer(502, {"error": "storage unavailable"})
             return

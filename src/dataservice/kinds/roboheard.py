@@ -7,8 +7,9 @@ The release holds
 - `sessions` and `segments.parquet`, the index's own tables;
 - `listen/<session>/<signal>.mp3` and `.jpg`: each signal encoded once, and
   its spectrogram as one sheet of tiles stacked top to bottom;
-- `Audio/<session>.wav`, `Audio_AEC/<session>.wav` and
-  `Video/V<nnn>-<camera>.mp4`, the originals, reached only by link.
+- optionally `Audio/<session>.wav`, `Audio_AEC/<session>.wav` and
+  `Video/V<nnn>-<camera>.mp4`, reached only by link. The archived
+  train-v1 release holds none of them: its player has no video.
 
 The viewer is rh_preview's whole-session player: one session's video, a
 chosen signal, its spectrogram, the speaker lanes and the transcript on one
