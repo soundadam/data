@@ -31,7 +31,7 @@ from importlib import resources
 from pathlib import Path
 
 from dataservice import access, catalog, page
-from dataservice.kinds import BadRequest, NotFound, roboheard
+from dataservice.kinds import BadRequest, NotFound, corpus, roboheard
 from dataservice.store import BadRange, NotPublished, Releases, Store
 
 WEB_PORT = int(os.environ.get("WEB_PORT", "8080"))
@@ -41,13 +41,14 @@ ORIGIN = os.environ.get("PORTAL_ORIGIN", "https://my.soundadam.com")
 STATE = Path(os.environ.get("STATE_DIR", "/var/lib/data"))
 API_HOST = "https://data.api.soundadam.com"
 MAX_BODY = 1024
-VIEWS = {"roboheard": roboheard.View}
+VIEWS = {"roboheard": roboheard.View, "corpus": corpus.View}
 STATIC = resources.files(__package__).joinpath("static")
 STATIC_NAME = re.compile(r"[a-z0-9-]+\.(?:js|css)")
 RANGE = re.compile(r"bytes=(?:[0-9]+-[0-9]*|-[0-9]+)")
 MEDIA = {
     ".wav": "audio/wav",
     ".mp3": "audio/mpeg",
+    ".opus": "audio/ogg",
     ".jpg": "image/jpeg",
     ".mp4": "video/mp4",
     ".json": "application/json",

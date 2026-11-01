@@ -72,8 +72,9 @@ def test_keys_are_limited_and_labelled(tmp_path):
 
 
 def test_shipped_catalog_loads():
-    found = catalog.load(kinds=frozenset({"roboheard"}))
-    assert list(found) == ["roboheard-2027"]
+    found = catalog.load(kinds=frozenset({"roboheard", "corpus"}))
+    assert list(found) == ["roboheard-2027", "asr-corpora"]
+    assert found["asr-corpora"].kind == "corpus" and found["asr-corpora"].prefix == "samples/asr-v1/"
     assert found["roboheard-2027"].public() == {
         "id": "roboheard-2027",
         "title": "RoboHEARD 2027 训练集",

@@ -56,6 +56,29 @@ audio is the clock, and the video is the published mp4, muted and following it.
 Nothing is encoded at request time: the page plays the published files over
 HTTP Range on signed links and fetches them again when a link expires.
 
+## Kind `corpus`
+
+A sample bank, not a dataset: a dozen or two clips from every ASR corpus the
+lab holds, so people can hear what each one is like before using it. It is
+written by `rh-corpus release` in roboheard-train. The bank is kept on elon
+(`s3://datasets/samples/<version>/` in its SeaweedFS); the origin on g18
+holds a copy at the same bucket and prefix, written with `_SUCCESS` last.
+A release holds:
+
+- `corpora.json`: the bank's version and encoding, the kinds of recording
+  (far-field meetings, in-car, dialogue, web, read, other languages), and each
+  corpus with its size, channels, labels, licence and status. `sampled` has
+  clips, `excluded` has clips but the corpus is not used, and `listed` has none;
+- `clips.parquet`: one row per clip, with its group in the corpus (e.g. `solo`
+  or `overlap`), text, speaker, seconds, and the file and seconds it was cut from;
+- `clips/<corpus>/<clip_id>/<signal>.opus`: Ogg Opus, mono, 16 kHz, 32 kbps,
+  one file per signal (`far`, `near` or `mono`), at most 20 s each.
+
+The viewer ([`static/corpus.js`](src/dataservice/static/corpus.js)) lists the
+corpora by kind and plays one corpus's clips group by group. Each clip is
+fetched once on a signed link and played from a blob, and the page decodes the
+same bytes to draw its spectrogram. Nothing derived is stored.
+
 ## Environment
 
 | Variable | Default |
