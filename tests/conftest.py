@@ -1,4 +1,4 @@
-"""A fake origin holding one tiny, synthetic roboheard release."""
+"""A fake S3 origin holding one tiny, synthetic roboheard release."""
 
 from __future__ import annotations
 

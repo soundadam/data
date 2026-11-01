@@ -7,17 +7,17 @@ Why it is shaped this way: platform-gitops
 
 - **Catalog**: [`catalog.json`](src/dataservice/catalog.json). Each
   competition has an id, a title, a kind (its viewer, `kinds/`), and its
-  release: one bucket and a prefix on the origin, `rclone serve s3` on g18.
+  release: one bucket and a prefix on the origin, SeaweedFS on elon.
 - **Grants**: members owns who holds which competition (the owner grants
   it; there is no request). This service asks `GET /data/<github id>`
   on members' internal port and keeps the answer at most 60 s.
 - **Releases**: a prefix is published once the publisher writes `_SUCCESS`
   last. The tables are read into memory (DuckDB), and the service reloads
   when `_SUCCESS` changes.
-- **Bytes**: the origin is reachable only from this pod, through its SSH
-  tunnel to g18. Pages and scripts get signed links to `<api base>/raw/<file>`,
+- **Bytes**: the origin is SeaweedFS's S3 ClusterIP on elon, read with
+  the key in Secret `data/s3`. Pages and scripts get signed links to `<api base>/raw/<file>`,
   valid for 10 minutes and bound to one competition and file; the service
-  streams the file from the origin with HTTP Range. When g18 cannot be
+  streams the file from the origin with HTTP Range. When SeaweedFS cannot be
   reached, the link answers 502.
 
 ## Ports
@@ -39,7 +39,10 @@ curl -H "Authorization: Bearer $KEY" "https://data.api.soundadam.com/v1/robohear
 
 ## Kind `roboheard`
 
-The release is written by `rh data publish` in roboheard-train:
+The release was written by `rh data publish` (roboheard-train tag
+`legacy/cascade-v0`) on g18, and its archive copied to
+`s3://datasets/produced/roboheard/train-v1/` on 2026-11-01 without the
+originals. A release holds:
 
 - `index.json`, with `listen`: the signals, the spectrogram's hop, tile and
   rows, and each session's AEC shift;
@@ -47,12 +50,14 @@ The release is written by `rh data publish` in roboheard-train:
 - `listen/<S>/<signal>.mp3` and `.jpg` for `mic1`…`mic6`, `mean`, `ref` and
   `aec1`…`aec6`: each signal encoded once, and its spectrogram as one sheet of
   tiles stacked top to bottom;
-- `Audio/`, `Audio_AEC/` and `Video/`.
+- optionally `Audio/`, `Audio_AEC/` and `Video/`, the originals. The
+  archive has none, so its player shows no video and `/raw` offers no wav.
 
 The viewer ([`static/roboheard.js`](src/dataservice/static/roboheard.js)) is
 rh_preview's whole-session player. One session's video, the chosen signal,
 its spectrogram, the speaker lanes and the transcript share one clock. The
-audio is the clock, and the video is the published mp4, muted and following it.
+audio is the clock, and the video, when the release has it, is the published
+mp4, muted and following it.
 Nothing is encoded at request time: the page plays the published files over
 HTTP Range on signed links and fetches them again when a link expires.
 
@@ -61,8 +66,8 @@ HTTP Range on signed links and fetches them again when a link expires.
 A sample bank, not a dataset: a dozen or two clips from every ASR corpus the
 lab holds, so people can hear what each one is like before using it. It is
 written by `rh-corpus release` in roboheard-train. The bank is kept on elon
-(`s3://datasets/samples/<version>/` in its SeaweedFS); the origin on g18
-holds a copy at the same bucket and prefix, written with `_SUCCESS` last.
+(`s3://datasets/samples/<version>/` in its SeaweedFS), written with
+`_SUCCESS` last.
 A release holds:
 
 - `corpora.json`: the bank's version and encoding, the kinds of recording
@@ -83,8 +88,8 @@ same bytes to draw its spectrogram. Nothing derived is stored.
 
 | Variable | Default |
 | --- | --- |
-| `S3_ENDPOINT` | `http://127.0.0.1:18333` (the tunnel's local end) |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | the origin's `--auth-key`, Secret `data/origin` |
+| `S3_ENDPOINT` | `http://10.43.55.56:8333` (SeaweedFS's S3 ClusterIP) |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | SeaweedFS's S3 key, Secret `data/s3` |
 | `MEMBERS_URL` | `http://members.members.svc.cluster.local:8081` |
 | `STATE_DIR` | `/var/lib/data` |
 | `PORTAL_ORIGIN` | `https://my.soundadam.com` (the Origin actions must carry) |

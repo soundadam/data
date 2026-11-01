@@ -1,9 +1,9 @@
 """The competitions' releases, read through S3 from their origin, and the links that stream them.
 
-The origin is `rclone serve s3` on g18, beside the originals, reached on
-127.0.0.1 through the pod's SSH tunnel with the origin's read-only key
-(Secret `data/origin`). Nothing is copied off g18: a release is a directory
-of tables plus symlinks to the originals (platform-gitops
+The origin is SeaweedFS on elon, reached on its S3 ClusterIP with the
+key in Secret `data/s3`. A release is what its publisher copied there:
+tables and encoded media, not the competition's originals, which stay on
+the machines that train on them (platform-gitops
 docs/adr/datasets-own-service-per-competition-owner-grants.md).
 
 A release is sealed: the publisher writes `_SUCCESS` last, and a prefix
@@ -34,7 +34,7 @@ from botocore.exceptions import ClientError
 
 from dataservice.catalog import Competition
 
-ENDPOINT = os.environ.get("S3_ENDPOINT", "http://127.0.0.1:18333")
+ENDPOINT = os.environ.get("S3_ENDPOINT", "http://10.43.55.56:8333")
 # The ADR's ceiling is 15 minutes; a page asks again when it needs a fresh one.
 LINK_S = 600
 RECHECK_S = 300
@@ -109,7 +109,7 @@ class Store:
             ):
                 return None
             raise
-        # The origin serves no ETag (hashing the originals would read them all).
+        # ETag, time and size together: any of them changes when `_SUCCESS` is rewritten.
         return f"{found.get('ETag', '')}|{found.get('LastModified', '')}|{found.get('ContentLength', '')}"
 
     def listing(self, bucket: str, prefix: str) -> dict[str, int]:
