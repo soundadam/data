@@ -1,0 +1,126 @@
+/* The sample bank viewer. Colours are the console's tokens; only the magma
+ * spectrogram is the viewer's own. */
+.cb-kind {
+	margin: 0 0 var(--space-40);
+}
+
+.cb-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: var(--space-20);
+}
+
+.cb-card {
+	display: block;
+	padding: var(--space-20) var(--space-30);
+	border: 1px solid var(--color-border, currentColor);
+	border-radius: var(--radius-20, 8px);
+	color: inherit;
+	text-decoration: none;
+}
+
+a.cb-card:hover,
+a.cb-card:focus-visible {
+	border-color: var(--color-series-2);
+}
+
+.cb-quiet {
+	opacity: 0.7;
+}
+
+.cb-title {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-10);
+	margin: 0 0 var(--space-10);
+}
+
+.cb-badge {
+	font-size: var(--text-xs);
+	padding: 0 var(--space-10);
+	border: 1px solid currentColor;
+	border-radius: 999px;
+}
+
+.cb-card dl {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 2px var(--space-20);
+	margin: 0 0 var(--space-10);
+	font-size: var(--text-sm);
+}
+
+.cb-card dt {
+	opacity: 0.7;
+}
+
+.cb-card dd {
+	margin: 0;
+}
+
+.cb-count {
+	margin: var(--space-10) 0 0;
+	font-size: var(--text-sm);
+	color: var(--color-series-2);
+}
+
+.cb-group {
+	margin: var(--space-30) 0;
+}
+
+.cb-clips {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.cb-clip {
+	padding: var(--space-20) 0;
+	border-top: 1px solid var(--color-border, currentColor);
+}
+
+.cb-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-10);
+}
+
+.cb-play {
+	width: auto;
+	padding: 0 var(--space-20);
+}
+
+.cb-play[aria-pressed="true"] {
+	border-color: var(--color-series-2);
+	color: var(--color-series-2);
+}
+
+.cb-meta {
+	font-size: var(--text-sm);
+	opacity: 0.8;
+}
+
+.cb-text {
+	margin: var(--space-10) 0;
+}
+
+.cb-spec {
+	display: block;
+	width: 100%;
+	height: 96px;
+	image-rendering: pixelated;
+}
+
+.cb-spec[hidden] {
+	display: none;
+}
+
+.cb-src {
+	margin: var(--space-10) 0 0;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: var(--text-xs);
+	opacity: 0.7;
+	overflow-wrap: anywhere;
+}

@@ -7,6 +7,14 @@
       "bucket": "roboheard",
       "prefix": "train-v1/",
       "license": "CC BY-NC-SA 4.0"
+    },
+    {
+      "id": "asr-corpora",
+      "title": "ASR 语料样本",
+      "kind": "corpus",
+      "bucket": "datasets",
+      "prefix": "samples/asr-v1/",
+      "license": "各语料自己的许可，见每张卡片"
     }
   ]
 }
