@@ -29,12 +29,14 @@ main.console {
 	width: auto;
 }
 
+.rh-splits,
 .rh-session {
 	display: flex;
 	align-items: end;
 	gap: var(--space-10);
 }
 
+.rh-splits .button,
 .rh-session .button {
 	width: auto;
 	padding: 0 var(--space-30);
