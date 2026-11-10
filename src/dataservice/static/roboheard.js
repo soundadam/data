@@ -96,6 +96,10 @@
 
   // --- the session header --------------------------------------------------------
 
+  function splitOf(row) {
+    return row.split === "dev" ? "dev" : "train";
+  }
+
   function sessionLabel(s) {
     return `${s.session} · ${fixed(s.dur / 60, 1)} 分钟 · ${s.n_speakers} 人`;
   }
@@ -137,7 +141,9 @@
 
   function player(mine, sid, data) {
     if (active) active.stop();
-    const ids = sessions.sessions.map((s) => s.session);
+    const split = splitOf(data.session);
+    const rowsInSplit = sessions.sessions.filter((row) => splitOf(row) === split);
+    const ids = rowsInSplit.map((row) => row.session);
     const at = ids.indexOf(sid);
     const go = (id) => { if (id) location.hash = "#/s/" + id; };
     const L = data.listen;
@@ -151,11 +157,20 @@
     }
     const cam = cams.includes(prefs.cam) ? prefs.cam : cams[0];
 
+    const splits = [["train", "训练集"], ["dev", "验证集"]].flatMap(([key, label]) => {
+      const first = sessions.sessions.find((row) => splitOf(row) === key);
+      return first ? [h("a", {
+        class: key === split ? "button" : "button secondary",
+        href: "#/s/" + (key === split ? sid : first.session),
+        "aria-current": key === split ? "true" : null,
+      }, label)] : [];
+    });
+    const switcher = splits.length > 1 ? h("nav", { class: "rh-splits", "aria-label": "数据集划分" }, splits) : null;
     const picker = h("div", { class: "rh-session" },
-      select("会话", sessions.sessions.map((s) => [s.session, sessionLabel(s)]), sid, go),
+      select("会话", rowsInSplit.map((row) => [row.session, sessionLabel(row)]), sid, go),
       h("button", { type: "button", class: "button secondary", disabled: at <= 0, title: "上一个", "aria-label": "上一个会话", onclick: () => go(ids[at - 1]) }, "‹"),
       h("button", { type: "button", class: "button secondary", disabled: at >= ids.length - 1, title: "下一个", "aria-label": "下一个会话", onclick: () => go(ids[at + 1]) }, "›"));
-    const top = [h("div", { class: "rh-toolbar" }, picker), ...header(data.session, data.speakers)];
+    const top = [h("div", { class: "rh-toolbar" }, switcher, picker), ...header(data.session, data.speakers)];
     if (!offered.length) {
       root.replaceChildren(...top, h("p", { class: "hint" }, "这个会话还没有试听文件。"));
       active = null;

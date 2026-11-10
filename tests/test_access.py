@@ -77,7 +77,7 @@ def test_shipped_catalog_loads():
     assert found["asr-corpora"].kind == "corpus" and found["asr-corpora"].prefix == "samples/asr-v1/"
     assert found["roboheard-2027"].public() == {
         "id": "roboheard-2027",
-        "title": "RoboHEARD 2027 训练集",
+        "title": "RoboHEARD 2027",
         "kind": "roboheard",
     }
 

@@ -2,7 +2,7 @@
   "competitions": [
     {
       "id": "roboheard-2027",
-      "title": "RoboHEARD 2027 训练集",
+      "title": "RoboHEARD 2027",
       "kind": "roboheard",
       "bucket": "datasets",
       "prefix": "produced/roboheard/train-v1/",
