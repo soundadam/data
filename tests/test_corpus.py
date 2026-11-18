@@ -102,7 +102,7 @@ def test_unknown_corpus_paths(store, bank, path):
 
 def test_corpus_over_http(store, competition, bank, tmp_path):
     service = app.Service(
-        {competition.id: competition, bank.id: bank},
+        catalog.Catalog({competition.id: competition, bank.id: bank}),
         Releases(store, KINDS),
         access.Grants(ask=lambda github: ["asr-corpora"]),
         access.Keys(str(tmp_path / "keys.sqlite3")),

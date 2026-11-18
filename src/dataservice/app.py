@@ -3,7 +3,8 @@
 - WEB_PORT (8080), my.soundadam.com/data/ behind SecurityPolicy `my`, which
   strips the /data prefix: the competitions a member holds, their personal
   keys, and each competition's viewer (static pages under /static/ calling
-  the JSON under /api/<competition>/).
+  the JSON under /api/<competition>/, or for kind `listen` the release's own
+  page and files under /c/<competition>/).
 - INTERNAL_PORT (8081), for members only (NetworkPolicy): GET /catalog.
 - API_PORT (8082), data.api with no edge policy: a personal key in
   `Authorization: Bearer`, then the same JSON under /v1/, plus a file
@@ -31,7 +32,7 @@ from importlib import resources
 from pathlib import Path
 
 from dataservice import access, catalog, page
-from dataservice.kinds import BadRequest, NotFound, corpus, roboheard
+from dataservice.kinds import BadRequest, NotFound, corpus, listen, roboheard
 from dataservice.store import BadRange, NotPublished, Releases, Store
 
 WEB_PORT = int(os.environ.get("WEB_PORT", "8080"))
@@ -41,7 +42,7 @@ ORIGIN = os.environ.get("PORTAL_ORIGIN", "https://my.soundadam.com")
 STATE = Path(os.environ.get("STATE_DIR", "/var/lib/data"))
 API_HOST = "https://data.api.soundadam.com"
 MAX_BODY = 1024
-VIEWS = {"roboheard": roboheard.View, "corpus": corpus.View}
+VIEWS = {"roboheard": roboheard.View, "corpus": corpus.View, "listen": listen.View}
 STATIC = resources.files(__package__).joinpath("static")
 STATIC_NAME = re.compile(r"[a-z0-9-]+\.(?:js|css)")
 RANGE = re.compile(r"bytes=(?:[0-9]+-[0-9]*|-[0-9]+)")
@@ -52,6 +53,20 @@ MEDIA = {
     ".jpg": "image/jpeg",
     ".mp4": "video/mp4",
     ".json": "application/json",
+}
+# What a listen bundle holds besides MEDIA.
+PAGE_FILES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".txt": "text/plain; charset=utf-8",
 }
 
 SECURITY_HEADERS = {
@@ -70,15 +85,19 @@ class Service:
 
     def __init__(
         self,
-        competitions: dict[str, catalog.Competition],
+        competitions: catalog.Catalog,
         releases: Releases,
         grants: access.Grants,
         keys: access.Keys,
     ):
-        self.competitions = competitions
+        self.catalog = competitions
         self.releases = releases
         self.grants = grants
         self.keys = keys
+
+    @property
+    def competitions(self) -> dict[str, catalog.Competition]:
+        return self.catalog.current()
 
     def granted(self, github: str) -> list[catalog.Competition]:
         allowed = self.grants.of(github)
@@ -329,6 +348,8 @@ class Web(Base):
                 self.keys_page(claims, github)
             elif m := re.fullmatch(r"/c/([a-z0-9-]+)/?", path):
                 self.viewer(claims, github, m.group(1), path.endswith("/"))
+            elif m := re.fullmatch(r"/c/([a-z0-9-]+)/(.+)", path):
+                self.page_file(github, m.group(1), urllib.parse.unquote(m.group(2)))
             elif path.startswith("/api/"):
                 parts = [urllib.parse.unquote(p) for p in path.removeprefix("/api/").split("/") if p]
                 if not parts:
@@ -447,6 +468,9 @@ class Web(Base):
         if not slash:
             self.redirect(f"{page.BASE}/c/{competition.id}/")
             return
+        if competition.kind == "listen":
+            self.page_file(github, competition.id, listen.INDEX)
+            return
         self.log_message("github:%s served viewer %s", github, competition.id)
         self.html(
             200,
@@ -461,6 +485,51 @@ class Web(Base):
             data={"api": f"{page.BASE}/api/{competition.id}", "base": f"{page.BASE}/c/{competition.id}/"},
             wide=True,
         )
+
+    def page_file(self, github: str, competition_id: str, name: str) -> None:
+        """A file of a `listen` release the member holds, beside its index.html; Range passes through."""
+        competition = self.service.competitions.get(competition_id)
+        if competition is None or competition.id not in self.service.grants.of(github):
+            self.redirect(page.BASE + "/")
+            return
+        kind = PAGE_FILES.get(Path(name).suffix.lower()) or MEDIA.get(Path(name).suffix.lower())
+        try:
+            release = self.service.releases.get(competition)
+            if competition.kind != "listen" or name not in release.files or kind is None:
+                raise NotFound(name)
+            byte_range = self.headers.get("Range")
+            if byte_range is not None and not RANGE.fullmatch(byte_range.strip()):
+                byte_range = None
+            found = release.stream(name, byte_range and byte_range.strip())
+        except (NotFound, NotPublished):
+            self.reply(404, "text/plain; charset=utf-8", b"not found\n")
+            return
+        except BadRange:
+            self.send_response(416)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        except Exception as error:  # noqa: BLE001 - the origin, or a release that is no bundle
+            self.log_message("%s page file failed: %s", competition.id, type(error).__name__)
+            self.reply(502, "text/plain; charset=utf-8", "暂时读不到，稍后再试。\n".encode())
+            return
+        if name == listen.INDEX:
+            self.log_message("github:%s served viewer %s", github, competition.id)
+        self.send_response(found.status)
+        self.send_header("Content-Type", kind)
+        self.send_header("Cache-Control", "private, no-cache")
+        for header, value in SECURITY_HEADERS.items():
+            self.send_header(header, value)
+        for header, value in found.headers.items():
+            self.send_header(header, value)
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        try:
+            for chunk in found.body:
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # a player that moved on
 
     def do_POST(self) -> None:  # noqa: N802
         path = urllib.parse.urlsplit(self.path).path
@@ -530,9 +599,12 @@ def serve(handler: type[Base], service: Service, port: int) -> ThreadingHTTPServ
 
 def main() -> None:
     STATE.mkdir(parents=True, exist_ok=True)
-    competitions = catalog.load(kinds=frozenset(VIEWS))
+    store = Store()
+    competitions = catalog.Catalog(catalog.load(kinds=frozenset(VIEWS)), store, frozenset(VIEWS))
+    competitions.refresh()
+    threading.Thread(target=competitions.run, daemon=True).start()
     service = Service(
-        competitions, Releases(Store(), VIEWS), access.Grants(), access.Keys(str(STATE / "keys.sqlite3"))
+        competitions, Releases(store, VIEWS), access.Grants(), access.Keys(str(STATE / "keys.sqlite3"))
     )
     servers = [
         serve(Web, service, WEB_PORT),

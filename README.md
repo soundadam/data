@@ -5,7 +5,8 @@ The lab's competition datasets, for members granted a competition:
 Why it is shaped this way: platform-gitops
 `docs/adr/datasets-own-service-per-competition-owner-grants.md`.
 
-- **Catalog**: [`catalog.json`](src/dataservice/catalog.json). Each
+- **Catalog**: [`catalog.json`](src/dataservice/catalog.json), plus the
+  entries published at run time ([Publishing](#publishing)). Each
   competition has an id, a title, a kind (its viewer, `kinds/`), and its
   release: one bucket and a prefix on the origin, SeaweedFS on elon.
 - **Grants**: members owns who holds which competition (the owner grants
@@ -24,7 +25,7 @@ Why it is shaped this way: platform-gitops
 
 | Port | Reached as | Who | What |
 | --- | --- | --- | --- |
-| 8080 | `my.soundadam.com/data/` (prefix stripped) | SecurityPolicy `my`, then role `data` checked here | `/` competitions, `/keys` personal keys, `/c/<id>/` viewer, `/api/<id>/…` its JSON, `/row` the overview row |
+| 8080 | `my.soundadam.com/data/` (prefix stripped) | SecurityPolicy `my`, then role `data` checked here | `/` competitions, `/keys` personal keys, `/c/<id>/` viewer (for `listen`, the pack and its files under it), `/api/<id>/…` its JSON, `/row` the overview row |
 | 8081 | members only (NetworkPolicy) | — | `/catalog`, `/healthz` |
 | 8082 | `data.api.soundadam.com` | `Authorization: Bearer sdd_…` | `/v1/`, `/v1/<id>/files`, `/v1/<id>/presign?key=`, `/v1/<id>/<view…>` |
 
@@ -36,6 +37,42 @@ each acts as the GitHub id it was issued to.
 curl -H "Authorization: Bearer $KEY" https://data.api.soundadam.com/v1/roboheard-2027/files
 curl -H "Authorization: Bearer $KEY" "https://data.api.soundadam.com/v1/roboheard-2027/presign?key=Audio/S001.wav"
 ```
+
+## Publishing
+
+A new dataset or listening pack needs no release here. Copy its release
+under a prefix of bucket `datasets`, `_SUCCESS` last, then write
+`catalog/<id>.json` beside it; within a minute (`CATALOG_S`) the service
+lists it, `/catalog` offers it to members, and the owner ticks it for the
+people who should see it on portal.admin.
+
+```sh
+s3() { aws --endpoint-url https://s3.api.soundadam.com s3 "$@"; }
+s3 cp --recursive pack-a/ s3://datasets/listen/pack-a-v1/   # `listen zip`, unzipped
+s3 cp /dev/null s3://datasets/listen/pack-a-v1/_SUCCESS
+echo '{"title": "试听 A", "kind": "listen", "prefix": "listen/pack-a-v1/", "license": "内部"}' |
+  s3 cp - s3://datasets/catalog/pack-a.json
+```
+
+The entry is `{title, kind, prefix, license}`; its id is the file name and
+its bucket is `datasets`. An entry whose id `catalog.json` already has, or
+that fails the checks in `catalog.py`, is left out and logged. Deleting the
+file withdraws the dataset within a minute; the grants stay in members and
+open nothing. Republishing is copying again and rewriting `_SUCCESS`.
+
+Whoever holds the SeaweedFS key publishes, and a `listen` page runs its own
+scripts on `my.soundadam.com`: publish only bundles `listen zip` wrote.
+
+## Kind `listen`
+
+A listening pack as soundadam/listen's `listen zip` writes it, unzipped: the
+zip's top folder is the prefix (`index.html`, `listen.js`, `manifest.js`,
+`design/`, the audio, `spec/`, `wave/`). `/c/<id>/` is the pack's own
+`index.html`, whole, outside the console frame, and every other file of the
+release is served beside it to the same members, Range included, so the page
+works as it does from disk. A prefix without `index.html`, `listen.js` or
+`manifest.js` does not load. There is no JSON; data.api lists and links its
+files like any release's.
 
 ## Kind `roboheard`
 
