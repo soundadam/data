@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from conftest import cookie
-from dataservice import access, app
+from dataservice import access, app, catalog
 from dataservice.kinds import roboheard
 from dataservice.store import Releases
 
@@ -45,7 +45,7 @@ def service(store, competition, tmp_path):
         return GRANTED.get(github, [])
 
     return app.Service(
-        {competition.id: competition},
+        catalog.Catalog({competition.id: competition}),
         Releases(store, {"roboheard": roboheard.View}),
         access.Grants(ask=ask),
         access.Keys(str(tmp_path / "keys.sqlite3")),

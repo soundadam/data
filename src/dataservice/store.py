@@ -201,7 +201,7 @@ class Releases:
             if seal is None:
                 self.loaded.pop(competition.id, None)
                 raise NotPublished(competition.id)
-            if current is not None and current.seal == seal:
+            if current is not None and current.seal == seal and current.competition == competition:
                 current.checked = time.monotonic()
                 return current
             files = self.store.listing(competition.bucket, competition.prefix)
