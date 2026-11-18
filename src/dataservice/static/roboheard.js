@@ -11,7 +11,7 @@
 (function () {
   "use strict";
 
-  const main = document.querySelector("main.console");
+  const main = document.querySelector("main");
   const root = document.getElementById("view");
   const API = main.dataset.api;
   const SIGNALS = [["mic", "阵列麦克风"], ["mean", "6 路平均"], ["aec", "AEC"], ["ref", "回声参考"]];

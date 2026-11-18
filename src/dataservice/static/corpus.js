@@ -10,7 +10,7 @@
 (function () {
   "use strict";
 
-  const main = document.querySelector("main.console");
+  const main = document.querySelector("main");
   const root = document.getElementById("view");
   const API = main.dataset.api;
   const SIGNALS = { far: "远场", near: "近讲", mono: "单通道" };

@@ -1,7 +1,7 @@
 // 密钥: issue (shown once), revoke, copy. Actions are same-origin JSON POSTs.
 (function () {
   "use strict";
-  const main = document.querySelector("main.console");
+  const main = document.querySelector("main");
   const alert = document.createElement("p");
   alert.className = "hint";
   alert.setAttribute("role", "alert");

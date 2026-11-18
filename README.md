@@ -91,6 +91,7 @@ same bytes to draw its spectrogram. Nothing derived is stored.
 | `S3_ENDPOINT` | `http://10.43.55.56:8333` (SeaweedFS's S3 ClusterIP) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | SeaweedFS's S3 key, Secret `data/s3` |
 | `MEMBERS_URL` | `http://members.members.svc.cluster.local:8081` |
+| `FRAME_URL` | `http://home.my.svc.cluster.local:8081/frame`: my/home's console frame (the design's links and the sidebar), asked per member and page and kept 30 s; while it is away a page keeps the last head and links back to 概要 |
 | `STATE_DIR` | `/var/lib/data` |
 | `PORTAL_ORIGIN` | `https://my.soundadam.com` (the Origin actions must carry) |
 
