@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from dataservice import catalog
+from dataservice import catalog, page
 from dataservice.store import BadRange, Stream
 
 PREFIX = "train-v1/"
@@ -138,3 +138,27 @@ def store():
 def cookie(claims: dict) -> str:
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
     return f"AccessToken=e30.{payload}.sig"
+
+
+class FakeHome:
+    """my/home's /frame: answers {head, side} naming what it was asked, or fails while `away`."""
+
+    def __init__(self):
+        self.asked: list[dict] = []
+        self.away = False
+
+    def __call__(self, query: dict) -> dict:
+        self.asked.append(query)
+        if self.away:
+            raise OSError("home away")
+        return {
+            "head": '<link rel="stylesheet" href="/_design/6.0.0/app.css">',
+            "side": f'<aside class="side" data-user="{query["user"]}" data-current="{query["current"]}"></aside>',
+        }
+
+
+@pytest.fixture(autouse=True)
+def home(monkeypatch):
+    found = FakeHome()
+    monkeypatch.setattr(page, "FRAME", page.Frame(ask=found))
+    return found

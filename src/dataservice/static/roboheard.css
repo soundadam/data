@@ -1,18 +1,18 @@
 /* The RoboHEARD whole-session player. Colours are the console's tokens; only
  * the magma spectrogram (in the published sheets) is the player's own. */
-main.console {
+main {
 	--rh-human: var(--color-series-2);
 	--rh-robot: var(--color-series-4);
 	--rh-on-series: #fff;
 	--rh-vh: 380px;
 }
 
-:root[data-theme="dark"] main.console {
+:root[data-theme="dark"] main {
 	--rh-on-series: var(--color-base);
 }
 
 @media (prefers-color-scheme: dark) {
-	:root[data-theme="auto"] main.console {
+	:root[data-theme="auto"] main {
 		--rh-on-series: var(--color-base);
 	}
 }

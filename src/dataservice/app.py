@@ -299,7 +299,6 @@ class Web(Base):
             claims_name=str(claims.get("preferred_username") or ""),
             held=access.roles(claims),
             theme=page.theme_of(cookies),
-            hat=page.hat_of(cookies),
             title=title,
             heading=heading,
             trail=trail,
@@ -398,7 +397,7 @@ class Web(Base):
                 f"<th>许可</th><th>状态</th></tr></thead><tbody>{rows}</tbody></table></div></section>"
             )
         self.log_message("github:%s served /", github)
-        self.html(200, claims, page.LABEL, page.LABEL, page.tabs("/") + body, page.crumbs(""))
+        self.html(200, claims, page.LABEL, page.LABEL, body, page.crumbs(), below=page.tabs("/"))
 
     def keys_page(self, claims: dict, github: str) -> None:
         keys = self.service.keys.of(github)
@@ -416,8 +415,7 @@ class Web(Base):
             else ""
         )
         body = (
-            page.tabs("/keys")
-            + f'<section id="issue"><h2>签发</h2><div class="fields"><label class="field"><span>名称</span>'
+            f'<section id="issue"><h2>签发</h2><div class="fields"><label class="field"><span>名称</span>'
             '<input id="label" maxlength="40" placeholder="g18 训练"></label></div>'
             '<button type="button" class="button" id="mint">签发密钥</button></section>'
             '<section id="minted" hidden><h2>新密钥</h2><p class="hint">只显示这一次。</p>'
@@ -431,7 +429,14 @@ class Web(Base):
         )
         self.log_message("github:%s served /keys", github)
         self.html(
-            200, claims, f"{page.LABEL} · 密钥", page.LABEL, body, page.crumbs(""), scripts=("keys.js",)
+            200,
+            claims,
+            f"{page.LABEL} · 密钥",
+            page.LABEL,
+            body,
+            page.crumbs(),
+            below=page.tabs("/keys"),
+            scripts=("keys.js",),
         )
 
     def viewer(self, claims: dict, github: str, competition_id: str, slash: bool) -> None:
@@ -450,7 +455,7 @@ class Web(Base):
             html.escape(competition.title),
             '<div id="view" aria-live="polite"><div class="pending" aria-busy="true">'
             "<span></span><span></span><span></span><span></span></div></div>",
-            page.crumbs("", competition.title),
+            page.crumbs(competition.title),
             scripts=(f"{competition.kind}.js",),
             styles=(f"{competition.kind}.css",),
             data={"api": f"{page.BASE}/api/{competition.id}", "base": f"{page.BASE}/c/{competition.id}/"},

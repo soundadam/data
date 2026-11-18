@@ -120,6 +120,7 @@ def test_viewer_shell_and_json(ports):
     assert status == 200
     assert 'data-api="/data/api/roboheard-2027"' in page and "/data/static/roboheard.js" in page
     assert "<script>" not in page  # no inline script: CSP script-src 'self'
+    assert '<aside class="side" data-user="ann" data-current="/data/">' in page  # home's sidebar
 
     assert web(ports, "/c/roboheard-2027")[0] == 302
     status, _, body = web(ports, "/api/roboheard-2027/sessions")
