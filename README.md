@@ -87,14 +87,20 @@ originals. A release holds:
 - `listen/<S>/<signal>.mp3` and `.jpg` for `mic1`…`mic6`, `mean`, `ref` and
   `aec1`…`aec6`: each signal encoded once, and its spectrogram as one sheet of
   tiles stacked top to bottom;
-- optionally `Audio/`, `Audio_AEC/` and `Video/`, the originals. The
-  archive has none, so its player shows no video and `/raw` offers no wav.
+- optionally `Audio/`, `Audio_AEC/` and `Video/`, the originals. train-v1
+  has no wav. Its `Video/` (all six cameras, 30 fps H.264, a keyframe every
+  7-8 s) was copied in on 2026-11-10; S130-S164 and S222-S227 are missing
+  or partial, and a session without a camera's mp4 plays without it.
 
 The viewer ([`static/roboheard.js`](src/dataservice/static/roboheard.js)) is
 rh_preview's whole-session player. One session's video, the chosen signal,
 its spectrogram, the speaker lanes and the transcript share one clock. The
 audio is the clock, and the video, when the release has it, is the published
-mp4, muted and following it.
+mp4, muted and following it: a drift under a second is taken up by the
+video's playback rate (at most 10 % off), a larger one by a seek, and the
+audio waits while the video has no frames yet. The originals' sparse
+keyframes make every seek decode seconds of video, so correcting by seeking
+alone kept the picture behind.
 Nothing is encoded at request time: the page plays the published files over
 HTTP Range on signed links and fetches them again when a link expires.
 

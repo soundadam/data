@@ -5,7 +5,11 @@
 //
 // Every signal was encoded once at publish: listen/<S>/<signal>.mp3, and its
 // spectrogram as one JPEG of tiles stacked top to bottom. Audio is the clock;
-// the video is the published mp4, muted and following it. Media links are
+// the video is the published mp4, muted and following it: a small drift is
+// taken up by the video's rate, a large one by a seek, and while the video
+// waits for frames the audio waits with it. The originals keep a keyframe
+// only every 7-8 s, so a seek decodes up to that much and takes a second or
+// two; nudging the rate never seeks at all. Media links are
 // relative to the API base and expire, so a media error fetches the session
 // again and carries the position over.
 (function () {
@@ -21,6 +25,10 @@
   const ROBOT = "机器人";
   const LANE = 20, OV_SPEC = 44, OV_LANE = 5, AXIS = 16, DET_SPEC = 170;
   const PREFS = "rh-player", POSITION = "rh-position";
+  // The video following the audio: within IN_SYNC s it plays at the chosen
+  // rate; up to SEEK_AT s it runs at most NUDGE faster or slower; beyond that
+  // it seeks. The audio waits for a waiting video at most HOLD_MS.
+  const IN_SYNC = 0.04, SEEK_AT = 1, NUDGE = 0.1, GAIN = 0.5, HOLD_MS = 8000;
   let generation = 0;
   let sessions = null; // the release's list, fetched once
   let active = null; // the player on screen: {toggle, seek, size, stop}
@@ -424,14 +432,46 @@
         lastOn = on;
       }
       const now = performance.now();
-      if (video && video.readyState > 0 && now - lastSync > 400) {
+      if (now - lastSync > 100) {
         lastSync = now;
-        if (Math.abs(video.currentTime - t) > 0.3) video.currentTime = t;
+        sync(t);
       }
       if (now - lastSave > 1000 && pending === null) {
         lastSave = now;
         keep("sessionStorage", POSITION, { sid, t });
       }
+    }
+
+    // The video follows the audio. A seek in flight is left to land; while the
+    // video has no frames at its position (seeking, waiting) the audio holds.
+    let holding = false; // the audio is paused only because the video is waiting
+    let holdTimer = 0;
+
+    function sync(t) {
+      if (!video || video.readyState < 1 || video.seeking) return;
+      const drift = video.currentTime - t; // > 0: the picture is ahead
+      if (Math.abs(drift) > SEEK_AT || (audio.paused && !holding && Math.abs(drift) > IN_SYNC)) {
+        video.playbackRate = prefs.rate;
+        video.currentTime = t;
+      } else if (Math.abs(drift) > IN_SYNC) {
+        video.playbackRate = prefs.rate * (1 - Math.min(NUDGE, Math.max(-NUDGE, GAIN * drift)));
+      } else if (video.playbackRate !== prefs.rate) {
+        video.playbackRate = prefs.rate;
+      }
+    }
+
+    function hold() {
+      if (holding || audio.paused) return;
+      holding = true;
+      audio.pause();
+      holdTimer = setTimeout(release, HOLD_MS); // a video that never comes does not stop the sound
+    }
+
+    function release() {
+      clearTimeout(holdTimer);
+      if (!holding) return;
+      holding = false;
+      if (mine === generation) audio.play().catch(() => {});
     }
 
     function seek(t) {
@@ -440,13 +480,31 @@
     }
 
     function toggle() {
-      if (audio.paused) audio.play().catch(() => {});
+      if (holding) { // the user's pause, while the video catches up
+        clearTimeout(holdTimer);
+        holding = false;
+        play.textContent = "▶ 播放";
+        if (video) video.pause();
+      } else if (audio.paused) audio.play().catch(() => {});
       else audio.pause();
     }
 
     audio.addEventListener("play", () => { play.textContent = "❚❚ 暂停"; if (video) video.play().catch(() => {}); });
-    audio.addEventListener("pause", () => { play.textContent = "▶ 播放"; if (video) video.pause(); });
+    audio.addEventListener("pause", () => {
+      if (holding) return; // the video goes on loading toward the audio's position
+      play.textContent = "▶ 播放";
+      if (video) video.pause();
+    });
     audio.addEventListener("seeked", () => { if (video && video.readyState > 0) video.currentTime = audio.currentTime; });
+    if (video) {
+      video.addEventListener("waiting", hold);
+      video.addEventListener("seeking", hold);
+      for (const ready of ["playing", "seeked", "canplay"]) {
+        video.addEventListener(ready, () => { if (!video.seeking && video.readyState >= 3) release(); });
+      }
+      video.addEventListener("error", release);
+      video.addEventListener("emptied", release);
+    }
     sheet.addEventListener("load", drawOverview);
     ov.addEventListener("click", (e) => seek((e.offsetX / ov.clientWidth) * dur));
     det.addEventListener("click", (e) => {
@@ -459,6 +517,8 @@
       seek: (by) => seek(audio.currentTime + by),
       size,
       stop() {
+        clearTimeout(holdTimer);
+        holding = false;
         audio.pause();
         audio.removeAttribute("src");
         audio.load();
